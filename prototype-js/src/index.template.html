@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nuclear Poker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>/*{{CSS}}*/</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== MENU ===================== -->
+  <section id="menu" class="screen">
+    <div class="hazard"></div>
+    <div class="menu-wrap">
+      <div class="logo">
+        <svg class="trefoil" viewBox="-50 -50 100 100" aria-hidden="true">
+          <circle r="48" fill="#f2b134"/>
+          <g fill="#14181d">
+            <path id="blade" d="M0,0 L-14,-24.2 A28,28 0 0 1 14,-24.2 Z" transform="translate(0,-4) scale(1.15)"/>
+            <path d="M0,0 L-14,-24.2 A28,28 0 0 1 14,-24.2 Z" transform="rotate(120) translate(0,-4) scale(1.15)"/>
+            <path d="M0,0 L-14,-24.2 A28,28 0 0 1 14,-24.2 Z" transform="rotate(240) translate(0,-4) scale(1.15)"/>
+            <circle r="6"/>
+          </g>
+        </svg>
+        <h1>Nuclear <span>Poker</span></h1>
+      </div>
+      <p class="tag">a fun, scary teaching game · you vs. two AI powers</p>
+
+      <div class="grid2">
+        <div>
+          <div class="box">
+            <h3>WAR rules — the rhythm of the game</h3>
+            <label class="opt" data-grp="mode"><input type="radio" name="mode" value="slow"><div><b>Slow</b><small>Take turns. After your play action you may do a Nuclear Test or an Attack. The basic game — start here.</small></div></label>
+            <label class="opt" data-grp="mode"><input type="radio" name="mode" value="fog"><div><b>Fog</b><small>After each turn everyone secretly writes down an order (test / attack a named player). All resolve at once. Expect mutual destruction.</small></div></label>
+            <label class="opt" data-grp="mode"><input type="radio" name="mode" value="fast"><div><b>Fast</b><small>Real time. Anyone may Test or Attack at any moment — the AIs will not wait for you. Superpower lets you pause &amp; peek at hands.</small></div></label>
+          </div>
+          <div class="box" style="margin-top:14px">
+            <h3>Biowar expansion</h3>
+            <label class="opt" data-grp="bio"><input type="radio" name="bio" value="off"><div><b>Off</b><small>Standard nuclear game.</small></div></label>
+            <label class="opt" data-grp="bio"><input type="radio" name="bio" value="2000"><div><b>2000</b><small>Labs &amp; Plague cards join the deck. Plague needs a Nuclear Test + all 4 Capabilities first.</small></div></label>
+            <label class="opt" data-grp="bio"><input type="radio" name="bio" value="2035"><div><b>2035</b><small>Biotech is cheap: just show Labs and have Plague. Everyone without Labs dies. Brutal.</small></div></label>
+          </div>
+        </div>
+        <div>
+          <div class="box">
+            <h3>The table</h3>
+            <label class="f" for="pname">Your callsign</label>
+            <input id="pname" type="text" maxlength="18" value="You" autocomplete="off">
+            <label class="f" for="p1">Opponent 1</label>
+            <select id="p1"></select>
+            <label class="f" for="p2">Opponent 2</label>
+            <select id="p2"></select>
+            <div class="row" style="margin-top:18px">
+              <button class="btn primary big" data-act="start">Begin</button>
+              <button class="btn" data-act="rules">How to play</button>
+            </div>
+          </div>
+          <div class="credits">
+            Game design by <b>Vinay Gupta</b> (<a href="https://twitter.com/leashless" target="_blank" rel="noopener">@leashless</a>) · card designs inspired by <b>Ian Willey</b> · print-and-play v4.2 by <b>Jonathan Korman</b> (<a href="https://miniver.itch.io/nuclear-poker" target="_blank" rel="noopener">miniver.itch.io</a>).<br>
+            This is an unofficial digital adaptation using the print-and-play card art. “The only winning move is not to play.”
+          </div>
+          <div class="cardstrip" id="strip"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== GAME ===================== -->
+  <section id="game" class="screen hidden">
+    <div id="topbar"></div>
+    <div id="board"></div>
+    <aside id="side">
+      <div class="side-sec" id="arsenal"></div>
+      <div class="side-sec"><h3>Event log</h3></div>
+      <div id="log"></div>
+    </aside>
+  </section>
+</div>
+
+<div id="overlay"></div>
+
+<script>/*{{ENGINE}}*/</script>
+<script>/*{{ASSETS}}*/</script>
+<script>/*{{UI}}*/</script>
+</body>
+</html>
