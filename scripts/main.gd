@@ -1892,21 +1892,24 @@ func _card_menu(cid: int, node: Control) -> void:
 	vb.add_theme_constant_override("separation", 5)
 	pn.add_child(vb)
 	vb.add_child(_lbl(NPGame.INFO[c.key].name.to_upper(), 18, C_AMBER, HEAD))
-	vb.add_child(_lbl(CARD_DESC[c.key], 12, C_MUT, null, true))
-	var any := false
-	if _can_offer():
-		vb.add_child(_lbl("Drag this card onto a player to offer it in a trade.", 12, C_MUT, null, true))
-		any = true
-	if not any:
-		vb.add_child(_lbl("Nothing to do with this card right now.", 12, C_MUT))
+	# wrapped text gets a fixed width up front, so the box is measured right first time
+	# (a wrapping label with no width yet measures as one tall column and stretches the box)
+	for txt in [CARD_DESC[c.key], "Drag this card onto a player's trade area to offer it in a trade." if _can_offer() else "Nothing to do with this card right now."]:
+		var l := _lbl(txt, 12, C_MUT, null, true)
+		l.custom_minimum_size.x = 230
+		vb.add_child(l)
+	pn.modulate.a = 0.0      # hidden until it has its final size and place
 	popup.add_child(pn)
 	popup_root.add_child(popup)
-	await get_tree().process_frame
-	if popup == null or not is_instance_valid(pn):
-		return
+	for i in range(2):
+		await get_tree().process_frame
+		if popup == null or not is_instance_valid(pn):
+			return
+		pn.reset_size()
 	var r := node.get_global_rect()
 	var vp := get_viewport_rect().size
 	pn.position = Vector2(clampf(r.get_center().x - pn.size.x / 2.0, 8.0, vp.x - pn.size.x - 8.0), maxf(8.0, r.position.y - pn.size.y - 10.0))
+	pn.modulate.a = 1.0
 
 func _close_popup() -> void:
 	if popup != null:
@@ -2416,6 +2419,9 @@ func _popup_press(prefix: String) -> bool:
 			return true
 	return false
 
+func hcz_all() -> Array:
+	return board.find_children("*", "", true, false).filter(func(n): return n is HandCard)
+
 func _first_hand_card() -> HandCard:
 	for n in board.find_children("*", "Control", true, false):
 		if n is HandCard:
@@ -2790,6 +2796,15 @@ func _shots() -> void:
 		await get_tree().create_timer(0.4).timeout
 		await _shot(d + "/2-offer-popup.png")
 		_close_popup()
+		# every card's popup should be the same compact size
+		var sizes: Array = []
+		for n2 in hcz_all():
+			_card_menu(n2.cid, n2)
+			await get_tree().create_timer(0.1).timeout
+			var pnl: Control = popup.get_child(1)
+			sizes.append(pnl.size)
+			_close_popup()
+		print("POPUP sizes ", sizes)
 	await _stage("3", ["uranium", "refinement", "warhead", "testing", "short", "long", "counter"], false)
 	await _shot(d + "/3-board3.png")
 	G.do_test(ME)
