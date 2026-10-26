@@ -79,6 +79,14 @@ var sounds := {}
 var ambience: AudioStreamPlayer = null
 var drag_ghost: Control = null      # the picture that follows the pointer while dragging
 var zoom: TextureRect = null      # enlarged copy of the card under the pointer
+# touch screens (tablets, phones): taps are clicks, and touching stands in for hovering
+var touch := false
+var touch_at := Vector2.ZERO
+var touch_ms := 0
+var touch_seq := 0                # bumps on every touch change, cancelling a pending long-press
+var zoom_frame := -1              # the frame a touch enlarged a card (Godot sends the emulated click first)
+var touch_scroll: Control = null  # a self-scrolling text box the finger is dragging
+var turn_overlay: Control = null  # "turn your device sideways" on a portrait screen
 var debug_panel: Control = null      # F9: what the AI players know and think
 var music: Array = []             # one player per tension level, all running in sync
 var music_level := -1
@@ -130,6 +138,8 @@ class HandCard extends Control:
 	var tex: Texture2D            # the card picture, for the copy that follows the pointer
 	var tw: Tween
 	var dragging := false
+	static var touch := false      # set by the game while the player is using a touch screen
+	var press_ms := 0
 	func _get_drag_data(at: Vector2) -> Variant:
 		if not can_drag:
 			return null
@@ -157,8 +167,8 @@ class HandCard extends Control:
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		mouse_entered.connect(_hover.bind(true))
-		mouse_exited.connect(_hover.bind(false))
+		mouse_entered.connect(func(): if not touch: _hover(true))
+		mouse_exited.connect(func(): if not touch: _hover(false))
 	func _hover(on: bool) -> void:
 		if tw:
 			tw.kill()
@@ -170,8 +180,20 @@ class HandCard extends Control:
 		tw.tween_property(face, "position:y", -14.0 if on else 0.0, 0.12)
 		tw.tween_property(face, "scale", Vector2.ONE * (1.35 if on else 1.0), 0.12).set_trans(Tween.TRANS_SINE)
 	func _gui_input(e: InputEvent) -> void:
-		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			picked.emit(cid, self)
+		if not (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT):
+			return
+		if not touch:
+			if not e.pressed:
+				picked.emit(cid, self)
+			return
+		# touch: the finger lifts the card to show it; a quick tap opens its options, a long hold only looks
+		if e.pressed:
+			press_ms = Time.get_ticks_msec()
+			_hover(true)
+		else:
+			_hover(false)
+			if Time.get_ticks_msec() - press_ms < 450:
+				picked.emit(cid, self)
 
 class DragSrc extends Control:
 	## A card that can be dragged onto a DropTarget. `preview` builds the card that follows the pointer.
@@ -441,6 +463,122 @@ class TableMap extends Control:
 			draw_circle(p, r, Color(0.08, 0.07, 0.05, 0.8))
 			draw_arc(p, r + 0.8, PI, TAU, 8, Color(0.6, 0.55, 0.42, 0.35), 1.0, true)
 
+# ====================================================================== touch
+## Tablets and phones. Godot turns taps and drags into mouse clicks and drags, so buttons, card
+## menus and drag-to-trade already work; what a mouse does by hovering is done here by touching:
+## hold a hand card to see it large (a quick tap opens its options), tap a small card to enlarge it
+## until the next touch, hold anything with a hint (a button, a portrait) to read it.
+func _input(e: InputEvent) -> void:
+	if e is InputEventScreenTouch:
+		if not touch:
+			_set_touch(true)
+		if e.index != 0:
+			return
+		touch_seq += 1
+		if e.pressed:
+			if zoom_frame != Engine.get_process_frames():
+				_zoom_hide()      # a card enlarged by an earlier tap goes away at the next touch
+			_touch_pass(modal_root)      # windows opened since: let a finger scroll them too
+			_touch_pass(popup_root)
+			touch_at = e.position
+			touch_ms = Time.get_ticks_msec()
+			touch_scroll = _scroll_text_at(e.position)
+			_touch_hold(touch_seq)
+		else:
+			touch_scroll = null
+			if Time.get_ticks_msec() - touch_ms > 450:
+				_zoom_hide()      # held to peek: let go and it goes; a quick tap leaves it up
+	elif e is InputEventScreenDrag and e.index == 0:
+		if e.position.distance_to(touch_at) > 14.0:
+			touch_seq += 1      # moving: not a long-press
+			_zoom_hide()
+		if touch_scroll != null and is_instance_valid(touch_scroll):
+			var sb: VScrollBar = touch_scroll.get_v_scroll_bar()
+			sb.value -= e.relative.y
+	elif touch and e is InputEventMouseMotion and e.device != InputEvent.DEVICE_ID_EMULATION and e.relative.length() > 0.0:
+		_set_touch(false)      # a real mouse on a touch laptop: hovering works again
+
+func _set_touch(on: bool) -> void:
+	touch = on
+	HandCard.touch = on
+	if on:
+		_zoom_hide()
+		_reset_hand_hover()
+		for root in [board, menu_root, modal_root]:
+			if root != null:
+				_touch_pass(root)
+
+## Panels and text let a dragging finger through to the scroll area behind them; hand cards,
+## draggable cards and buttons keep their touches.
+func _touch_pass(n: Node) -> void:
+	if n == null:
+		return
+	for ch in n.get_children():
+		if ch is Control and not (ch is BaseButton or ch is HandCard or ch is DragSrc or ch is LineEdit or ch is ScrollBar) \
+				and ch.mouse_filter == Control.MOUSE_FILTER_STOP and ch != logbox:
+			ch.mouse_filter = Control.MOUSE_FILTER_PASS
+		_touch_pass(ch)
+
+## A text box that scrolls itself (the newspaper log) under the finger, if any.
+func _scroll_text_at(pos: Vector2) -> RichTextLabel:
+	if logbox != null and logbox.is_visible_in_tree() and logbox.get_global_rect().has_point(pos):
+		return logbox
+	return null
+
+## Long-press: after a moment without moving, show the hint of whatever is under the finger.
+func _touch_hold(seq: int) -> void:
+	await get_tree().create_timer(0.5).timeout
+	if seq != touch_seq or get_viewport().gui_is_dragging() or zoom != null:
+		return
+	var tip := _hint_at(touch_at)
+	if tip != "":
+		_toast(tip)
+
+func _hint_at(pos: Vector2) -> String:
+	var best := ""
+	for root in [self, overlay]:
+		for n in root.find_children("*", "Control", true, false):
+			var c := n as Control
+			if c.tooltip_text != "" and c.mouse_filter != Control.MOUSE_FILTER_IGNORE and c.is_visible_in_tree() \
+					and c.get_global_rect().has_point(pos):
+				best = c.tooltip_text      # later in the tree draws on top
+	return best
+
+## Phones held upright: the table needs a landscape screen, so ask for the device to be turned.
+func _check_orientation(sz := Vector2.ZERO) -> void:
+	if sz == Vector2.ZERO:
+		sz = get_viewport_rect().size
+	var upright := sz.y > sz.x * 1.1 and (touch or DisplayServer.is_touchscreen_available() or sz != get_viewport_rect().size)
+	if upright and turn_overlay == null:
+		turn_overlay = ColorRect.new()
+		(turn_overlay as ColorRect).color = Color(0.07, 0.07, 0.05, 0.97)
+		turn_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		turn_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+		var cc := CenterContainer.new()
+		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		turn_overlay.add_child(cc)
+		var vb := VBoxContainer.new()
+		vb.alignment = BoxContainer.ALIGNMENT_CENTER
+		vb.add_theme_constant_override("separation", 24)
+		cc.add_child(vb)
+		var tr := Trefoil.new()
+		tr.custom_minimum_size = Vector2(160, 160)
+		tr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		vb.add_child(tr)
+		var l := _lbl("TURN YOUR DEVICE SIDEWAYS", 64, C_INK, HEAD)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(l)
+		var l2 := _lbl("The table needs a landscape screen.", 40, C_MUT, MONO)
+		l2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(l2)
+		var ly := CanvasLayer.new()
+		ly.layer = 50
+		ly.add_child(turn_overlay)
+		add_child(ly)
+	elif not upright and turn_overlay != null:
+		turn_overlay.get_parent().queue_free()
+		turn_overlay = null
+
 # ====================================================================== style helpers
 func _sb(bg: Color, border := Color(0, 0, 0, 0), bw := 0, radius := 10, pad := 0) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -577,13 +715,19 @@ func _tex(key: String, w: float) -> TextureRect:
 	t.mouse_filter = Control.MOUSE_FILTER_PASS
 	if w < 100.0:
 		t.mouse_entered.connect(_zoom_show.bind(t, key))
-		t.mouse_exited.connect(_zoom_hide)
+		t.mouse_exited.connect(func(): if not touch: _zoom_hide())
 		t.tree_exiting.connect(_zoom_hide)
+		t.gui_input.connect(func(e):
+			if touch and e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+				_zoom_show(t, key, true))
 	return t
 
-## Hovering a small card shows it large beside the pointer.
-func _zoom_show(src: Control, key: String) -> void:
+## Hovering a small card shows it large beside the pointer (on a touch screen: touching it).
+func _zoom_show(src: Control, key: String, by_touch := false) -> void:
+	if touch and not by_touch:
+		return      # the emulated pointer "hovers" wherever a finger last was - ignore that
 	_zoom_hide()
+	zoom_frame = Engine.get_process_frames() if by_touch else -1
 	if not is_instance_valid(src) or not src.is_visible_in_tree() or get_viewport().gui_is_dragging():
 		return
 	var zw := 210.0
@@ -702,7 +846,12 @@ func _ready() -> void:
 		overlay.add_child(c)
 		set(nm, c)
 	get_viewport().size_changed.connect(_on_resize)
-	if "--autotest" in OS.get_cmdline_user_args():
+	if DisplayServer.is_touchscreen_available():
+		_set_touch(true)      # until a real mouse moves
+	_check_orientation()
+	if "--touchtest" in OS.get_cmdline_user_args():
+		_touchtest.call_deferred()
+	elif "--autotest" in OS.get_cmdline_user_args():
 		_autotest.call_deferred()
 	elif "--shots" in OS.get_cmdline_user_args():
 		_shots.call_deferred()
@@ -1275,6 +1424,8 @@ func _fs_label() -> String:
 func _toggle_fullscreen() -> void:
 	var on := not _fs_on()
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED)
+	if on and OS.has_feature("web"):
+		JavaScriptBridge.eval("try { screen.orientation.lock('landscape').catch(function(){}); } catch (e) {}", true)
 	cfg.fullscreen = on
 	_save_cfg()
 	_refresh_fs_buttons()
@@ -1286,6 +1437,7 @@ func _refresh_fs_buttons() -> void:
 		_render_top()
 
 func _on_resize() -> void:
+	_check_orientation()
 	_refresh_fs_buttons()
 	if G != null and game_root.visible:
 		_render()
@@ -1298,6 +1450,8 @@ func _render() -> void:
 	_render_board()      # first: it resets the button registry
 	_render_top()
 	_render_side()
+	if touch:
+		_touch_pass(board)
 	_music_update()
 	if debug_panel != null:
 		_build_debug()
@@ -2379,7 +2533,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "The table map")
 	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round an inland sea. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the sea to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 	_rules_h(vb, "Tips")
-	_rules_p(vb, "- Hover over any card to see it larger.\n- Press [b]F9[/b] for a debug view of what the other powers hold and think.")
+	_rules_p(vb, "- Hover over any card to see it larger.\n- On a tablet or phone: [b]tap[/b] a card in your hand for its options, [b]hold[/b] it to see it large, and [b]drag[/b] it to trade. Tap a small card to enlarge it (tap anywhere to put it away); hold a button or a portrait to read its hint. Play in landscape - [b]Fullscreen[/b] gives the most room.\n- Press [b]F9[/b] for a debug view of what the other powers hold and think.")
 
 # ====================================================================== end
 func _finish() -> void:
@@ -2970,6 +3124,149 @@ func _dragtest() -> void:
 		fails += 1
 		print("DRAGTEST FAIL: a cancelled drag did not put the card back")
 	print("DRAGTEST DONE fails=", fails)
+	get_tree().quit(fails)
+
+## --touchtest: the same game driven by a finger (screen touches, turned into mouse events by Godot).
+func _touch(pos: Vector2, pressed: bool) -> void:
+	var t := InputEventScreenTouch.new()
+	t.index = 0
+	t.position = pos
+	t.pressed = pressed
+	Input.parse_input_event(t)
+
+func _touch_drag(from: Vector2, to: Vector2, hold := 0.0) -> void:
+	_touch(from, true)
+	await get_tree().process_frame
+	if hold > 0.0:
+		await get_tree().create_timer(hold).timeout
+	for i in range(1, 13):
+		var d := InputEventScreenDrag.new()
+		d.index = 0
+		d.position = from.lerp(to, i / 12.0)
+		d.relative = (to - from) / 12.0
+		Input.parse_input_event(d)
+		await get_tree().process_frame
+	await get_tree().create_timer(0.15).timeout
+	_touch(to, false)
+	await get_tree().create_timer(0.3).timeout
+
+func _touchtest() -> void:
+	await get_tree().process_frame
+	var fails := 0
+	var say := func(ok: bool, what: String):
+		print("TOUCHTEST ", "ok   " if ok else "FAIL ", what)
+		return 0 if ok else 1
+	# menu: tap a small card - it stays enlarged; the next touch puts it away
+	var small: Control = null
+	for n in menu_root.find_children("*", "TextureRect", true, false):
+		if n.custom_minimum_size.x == 64.0:
+			small = n
+			break
+	var c0 := small.get_global_rect().get_center()
+	_touch(Vector2(1200, 700), true)      # the first touch tells the game a finger is in use
+	await get_tree().process_frame
+	_touch(Vector2(1200, 700), false)
+	await get_tree().process_frame
+	_touch(c0, true)
+	await get_tree().process_frame
+	_touch(c0, false)
+	await get_tree().create_timer(0.2).timeout
+	fails += say.call(touch and zoom != null, "tap on a small card enlarges it")
+	_touch(Vector2(1200, 700), true)
+	await get_tree().process_frame
+	_touch(Vector2(1200, 700), false)
+	await get_tree().create_timer(0.2).timeout
+	fails += say.call(zoom == null, "the next tap puts it away")
+	# the emulated pointer resting on a card must not enlarge it by "hovering"
+	var mm := InputEventMouseMotion.new()
+	mm.device = InputEvent.DEVICE_ID_EMULATION
+	mm.position = c0
+	mm.relative = Vector2(1, 0)
+	Input.parse_input_event(mm)
+	await get_tree().create_timer(0.2).timeout
+	fails += say.call(zoom == null, "no hover zoom from a finger")
+	# game: hold a hand card to see it, tap it for its options
+	await _stage("4", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
+	G.turn = 0
+	G.phase = "play"
+	_render()
+	await get_tree().create_timer(0.4).timeout
+	board_scroll.scroll_vertical = 10000
+	await get_tree().create_timer(0.2).timeout
+	var hc := _first_hand_card()
+	var hp := hc.get_global_rect().get_center() + Vector2(-hc.size.x * 0.3, 0)
+	_touch(hp, true)
+	await get_tree().create_timer(0.7).timeout
+	var lifted := hc.face != null and hc.face.scale.x > 1.1
+	_touch(hp, false)
+	await get_tree().create_timer(0.3).timeout
+	fails += say.call(lifted, "holding a hand card lifts it")
+	fails += say.call(popup == null and hc.face.scale.x < 1.1, "letting go of a hold puts it back, no menu")
+	_touch(hp, true)
+	await get_tree().process_frame
+	_touch(hp, false)
+	await get_tree().create_timer(0.3).timeout
+	fails += say.call(popup != null, "a quick tap opens the card's options")
+	_touch(Vector2(1200, 60), true)
+	await get_tree().process_frame
+	_touch(Vector2(1200, 60), false)
+	await get_tree().create_timer(0.3).timeout
+	fails += say.call(popup == null, "tapping away closes them")
+	# drag a card from the hand onto a player's trade area
+	var seat1: Control = seat_zones.get(1, null)
+	var log_before := G.log_entries.size()
+	var hand_before := ME.hand.size()
+	hc = _first_hand_card()
+	var hr := hc.get_global_rect()
+	await _touch_drag(Vector2(hr.position.x + hr.size.x * 0.3, minf(hr.position.y + 30.0, 705.0)), seat1.get_global_rect().get_center())
+	await get_tree().create_timer(0.3).timeout
+	# the AI may turn the offer down (the card then comes back) - either way the offer was made
+	var offered := false
+	for i in range(log_before, G.log_entries.size()):
+		if str(G.log_entries[i].text).begins_with(ME.name + " offers"):
+			offered = true
+	fails += say.call(offered, "dragging a card to a seat offers it (hand %d->%d)" % [hand_before, ME.hand.size()])
+	fails += say.call(not get_viewport().gui_is_dragging(), "drag finished")
+	# hold a portrait: its hint appears
+	await _stage("4", ["uranium", "short"], false)
+	G.turn = 0
+	G.phase = "play"
+	_render()
+	board_scroll.scroll_vertical = 0
+	await get_tree().create_timer(0.4).timeout
+	var frame: Control = null
+	for n in board.find_children("*", "PanelContainer", true, false):
+		if n.tooltip_text == G.players[1].name:
+			frame = n
+			break
+	var toasts_before := fx_root.get_child_count()
+	var fp := frame.get_global_rect().get_center()
+	_touch(fp, true)
+	await get_tree().create_timer(0.8).timeout
+	_touch(fp, false)
+	await get_tree().create_timer(0.1).timeout
+	var shown := false
+	for n in fx_root.find_children("*", "Label", true, false):
+		if n.text == G.players[1].name:
+			shown = true
+	fails += say.call(shown and fx_root.get_child_count() > toasts_before, "holding a portrait shows its hint")
+	await _shot("/tmp/gshots2/touch-hint.png")
+	# a real mouse brings hovering back
+	var real := InputEventMouseMotion.new()
+	real.device = 0
+	real.position = Vector2(640, 300)
+	real.relative = Vector2(3, 0)
+	Input.parse_input_event(real)
+	await get_tree().process_frame
+	fails += say.call(not touch and not HandCard.touch, "a real mouse switches hovering back on")
+	# upright phone: ask for landscape
+	_check_orientation(Vector2(720, 1500))
+	await get_tree().process_frame
+	fails += say.call(turn_overlay != null, "portrait screen asks to turn the device")
+	await _shot("/tmp/gshots2/touch-portrait.png")
+	_check_orientation(Vector2(1280, 720))
+	fails += say.call(turn_overlay == null, "landscape again removes it")
+	print("TOUCHTEST DONE fails=", fails)
 	get_tree().quit(fails)
 
 var scroll_to_me := func():
