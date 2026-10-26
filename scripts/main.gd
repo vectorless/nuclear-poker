@@ -1062,7 +1062,7 @@ func _build_menu() -> Control:
 	logo.add_child(_lbl("NUCLEAR", 58, C_INK, HEAD))
 	logo.add_child(_lbl("POKER", 58, C_AMBER, HEAD))
 	col.add_child(logo)
-	col.add_child(_lbl("a fun, scary teaching game  ·  you vs. two to four AI powers", 14, C_MUT, MONO))
+	col.add_child(_lbl("a fun, scary teaching game  ·  you vs. two to four powers", 14, C_MUT, MONO))
 
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 20)
@@ -1165,7 +1165,7 @@ func _build_menu() -> Control:
 
 func _players_label() -> void:
 	var n := players_opt.selected + 3
-	players_opt.text = "%d players - you and %s AI powers" % [n, ["two", "three", "four"][n - 3]]
+	players_opt.text = "%d players - you and %s powers" % [n, ["two", "three", "four"][n - 3]]
 
 func _refresh_opts() -> void:
 	var n_ai := int(cfg.players) - 1
@@ -2527,7 +2527,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent weapons go to the set-aside pile. A [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see.\n- An eliminated player's hand is turned face up and stays on show in their seat.")
 	_rules_h(vb, "Threats and disarming")
-	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window): name a player you could attack. They must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The AI powers may disarm too, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
+	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window): name a player you could attack. They must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The other powers may disarm too, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "The table map")

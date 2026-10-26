@@ -2,6 +2,8 @@
 """Generate the WWII-style card faces, card back and table texture for Nuclear Poker.
 
     python3 tools/ww2_cards.py            (run from the project folder; needs Pillow + numpy)
+    python3 tools/ww2_cards.py --art poster   use the painted pictures in assets/ww2/art/poster/
+                                              (from tools/meshy_card_art.py) instead of the ink icons
 
 Reads the icon shapes from the print-and-play card art in assets/*.png and redraws every card as a
 1940s field-manual / dossier card: aged paper, olive-drab header, stencil title, typewriter rules text
@@ -122,6 +124,60 @@ def stamp(text, rng, color=STAMP_RED, size=44, angle=-14):
     return col, m.point(lambda v: int(v * 0.82))
 
 
+ART = None      # a style folder under assets/ww2/art/, or None for the ink icons
+ART_BOX = (52, 200, W - 52, 508)      # the picture window: left, top, right, bottom
+
+
+def trim_bars(im):
+    """Cut away flat dark or light bars round a picture (letterboxing the image model sometimes adds)."""
+    a = np.asarray(im).astype(float).mean(-1)
+    def flat(line):
+        return line.std() < 8.0 and (line.mean() < 40 or line.mean() > 200)
+    t, b, l, r = 0, a.shape[0], 0, a.shape[1]
+    while t < b - 10 and flat(a[t, l:r]):
+        t += 1
+    while b > t + 10 and flat(a[b - 1, l:r]):
+        b -= 1
+    while l < r - 10 and flat(a[t:b, l]):
+        l += 1
+    while r > l + 10 and flat(a[t:b, r - 1]):
+        r -= 1
+    return im.crop((l, t, r, b))
+
+
+def art_window(card, key, rng):
+    """Set a painted picture into the card like a printed plate: cropped to the window, a touch of the
+    paper's grain through it, a thin ink frame. Returns False when there is no picture for this card."""
+    path = os.path.join(OUT, "art", ART, key + ".png") if ART else None
+    if not path or not os.path.exists(path):
+        return False
+    x0, y0, x1, y1 = ART_BOX
+    bw, bh = x1 - x0, y1 - y0
+    im = trim_bars(Image.open(path).convert("RGB"))
+    sc = max(bw / im.width, bh / im.height)
+    im = im.resize((int(im.width * sc + 0.5), int(im.height * sc + 0.5)), Image.LANCZOS)
+    ox, oy = (im.width - bw) // 2, (im.height - bh) // 2
+    im = im.crop((ox, oy, ox + bw, oy + bh))
+    grain = card.crop((x0, y0, x1, y1)).convert("RGB")
+    a = np.asarray(im).astype(float)
+    g = np.asarray(grain).astype(float) / np.array(PAPER, float)
+    a = a * (0.9 + 0.1 * g)      # printed on the same paper
+    card.paste(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)), (x0, y0))
+    d = ImageDraw.Draw(card)
+    d.rectangle([x0, y0, x1 - 1, y1 - 1], outline=INK, width=3)
+    return True
+
+
+def _icon(card, ic, rng):
+    box_w, box_h = 380, 290
+    sc = min(box_w / ic.width, box_h / ic.height)
+    ic = ic.resize((max(1, int(ic.width * sc)), max(1, int(ic.height * sc))), Image.LANCZOS)
+    n = noise(ic.width, ic.height, 5, rng)
+    ic = Image.fromarray((np.asarray(ic) * (0.72 + 0.28 * n)).astype(np.uint8))      # worn ink
+    inkc = Image.new("RGB", ic.size, INK)
+    card.paste(inkc, ((W - ic.width) // 2, 215 + (box_h - ic.height) // 2), ic)
+
+
 def make_card(key, idx):
     rng = np.random.default_rng(1945 + idx)
     prng = random.Random(1945 + idx)
@@ -141,15 +197,12 @@ def make_card(key, idx):
         size -= 2
     d.text((52, 46 + (70 - size) // 2), title, font=STENCIL(size), fill=PAPER)
     d.text((54, 160), kind, font=TYPE(30), fill=INK)
-    # icon
-    ic = icon_mask(key)
-    box_w, box_h = 380, 290
-    sc = min(box_w / ic.width, box_h / ic.height)
-    ic = ic.resize((max(1, int(ic.width * sc)), max(1, int(ic.height * sc))), Image.LANCZOS)
-    n = noise(ic.width, ic.height, 5, rng)
-    ic = Image.fromarray((np.asarray(ic) * (0.72 + 0.28 * n)).astype(np.uint8))      # worn ink
-    inkc = Image.new("RGB", ic.size, INK)
-    card.paste(inkc, ((W - ic.width) // 2, 215 + (box_h - ic.height) // 2), ic)
+    if art_window(card, key, rng):
+        ic = None
+    else:
+        ic = icon_mask(key)
+    if ic is not None:
+        _icon(card, ic, rng)
     # rules text
     y = 525
     if req:
@@ -228,6 +281,10 @@ def make_table():
 
 
 def main():
+    global ART
+    import sys
+    if "--art" in sys.argv:
+        ART = sys.argv[sys.argv.index("--art") + 1]
     os.makedirs(OUT, exist_ok=True)
     for i, k in enumerate(CARDS):
         make_card(k, i).save(os.path.join(OUT, k + ".png"))
