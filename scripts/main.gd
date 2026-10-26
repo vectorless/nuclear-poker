@@ -1051,7 +1051,7 @@ func _pump() -> void:
 	if st == "human":
 		_on_human_turn(tok)
 		return
-	var delay: float = (AI_DELAY if ME.alive else (0.04 if ff else 0.26)) / speed
+	var delay: float = ((AI_DELAY + _reading_time()) if ME.alive else (0.04 if ff else 0.26)) / speed
 	await get_tree().create_timer(delay).timeout
 	if tok != pump_token or G == null:
 		return
@@ -1382,6 +1382,14 @@ func _seat(p: NPGame.Player) -> Control:
 		pc.modulate = Color(0.8, 0.78, 0.74)      # dimmed, but their revealed hand stays readable
 	_pass_through(pc)
 	return pc
+
+## Extra seconds to leave the banner up so a long move can be read: about 30 characters a second
+## beyond the first 40, at most 3 more seconds.
+func _reading_time() -> float:
+	if G == null or G.log_entries.is_empty():
+		return 0.0
+	var n: int = str(G.log_entries.back().text).length()
+	return clampf((n - 40) / 30.0, 0.0, 3.0)
 
 ## While the AIs play, the banner reports the move just made (the latest line of the event log)
 ## instead of a generic "thinking...".
