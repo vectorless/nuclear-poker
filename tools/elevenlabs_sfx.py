@@ -21,7 +21,7 @@ SFX = {
     "draw": ("A single paper playing card slid quickly off a deck onto a wooden table, crisp and close.", 0.8, False),
     "click": ("One mechanical typewriter key strike, crisp metallic clack, close microphone.", 0.5, False),
     "your_turn": ("A 1940s teleprinter bell: one clear small bell ding followed by a short mechanical carriage clunk.", 1.2, False),
-    "trade_offer": ("A telegraph operator tapping a short burst of Morse code on a brass key, 1940s radio room.", 1.6, False),
+    "trade_offer": ("A gentle 1940s intercom chime: two soft, warm, descending bell tones, muted and distant, short decay.", 1.4, False),
     "trade_counter": ("A quick burst of a manual typewriter typing a few words, then the carriage return bell.", 1.6, False),
     "deal": ("A rubber stamp pressed firmly onto paper on a wooden desk, a solid thump, then papers shuffled together.", 1.4, False),
     "broken": ("A sheet of thick paper torn sharply in half, then a short ominous low brass stab.", 1.6, False),
@@ -38,7 +38,7 @@ SFX = {
 
 
 # target loudness (LUFS) per sound; everything else -18
-LEVEL = {"click": -24, "draw": -24, "deal": -21, "your_turn": -21, "trade_offer": -21, "trade_counter": -21,
+LEVEL = {"trade_offer": -25, "click": -24, "draw": -24, "deal": -21, "your_turn": -21, "trade_counter": -21,
          "attack": -16, "death": -16, "test": -16, "ambience": -30}
 
 def normalize(path, lufs):
