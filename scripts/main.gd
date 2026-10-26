@@ -21,10 +21,10 @@ const CARD_DESC := {
 	"refinement": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
 	"warhead": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
 	"testing": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
-	"short": "Needs a Nuclear Test. Attack: eliminate one neighboring player.",
+	"short": "Needs a Nuclear Test. Attack: eliminate a player sitting immediately to your left or right.",
 	"long": "Needs Nuclear Test + Short-range. Attack: eliminate any one player.",
-	"counter": "Needs Nuclear Test + Short + Long. When you are eliminated, eliminate one player.",
-	"super": "Needs Nuclear Test + all 4 Capabilities. Attack any player at any time.",
+	"counter": "Second Strike. Needs Nuclear Test + Short + Long. When you are eliminated, immediately eliminate one player.",
+	"super": "Needs Nuclear Test + all 4 Capabilities. You are a Nuclear Superpower: strike any player, and strike more than once.",
 	"labs": "Biotech. Enables and protects against Plague attacks.",
 	"plague": "Biotech. Requires Labs. Attack: eliminate all players without Labs.",
 }
@@ -620,7 +620,7 @@ func _build_menu() -> Control:
 	var strip := HFlowContainer.new()
 	strip.add_theme_constant_override("h_separation", 6)
 	strip.add_theme_constant_override("v_separation", 6)
-	for k in ORDER:
+	for k in ORDER.slice(0, 8):
 		strip.add_child(_tex(k, 52))
 	right.add_child(strip)
 	_refresh_opts()
@@ -1811,33 +1811,7 @@ func _rules_modal() -> void:
 	var classic: bool = (G.mode == "classic") if G != null else (str(cfg.mode) == "classic")
 	var txt := "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b] - play until someone is the last power standing, or everyone agrees to stop.\n\n"
 	if classic:
-		txt += "[color=#f2b134][b]GOAL[/b][/color]\n"
-		txt += "Successfully [b]test a nuclear weapon[/b] (collect all four Technology cards), then become a [b]Nuclear Superpower[/b] (all four Capability cards).\n\n"
-		txt += "[color=#f2b134][b]SET UP[/b][/color]\n"
-		txt += "One 8-card set per player, plus one extra set: 3 players = 32 cards, 4 players = 40 (plus 4 Labs + 4 Plague per set with Biowar). Everyone is dealt 3 cards; the rest is the draw pile.\n\n"
-		txt += "[color=#f2b134][b]YOUR TURN: DRAW OR TRADE[/b][/color]\n"
-		txt += "- [b]Research[/b]: draw a card.\n"
-		txt += "- [b]Trade[/b]: click a card in your hand and offer it face-down to another player. If they agree, they take your card [i]now[/i] - but they only give a card back on [i]their[/i] next turn, and they are [b]not obliged[/b] to. Trading partners can deceive!\n"
-		txt += "- If the draw pile runs out you can only trade, or skip.\n\n"
-		txt += "[color=#f2b134][b]NUCLEAR TEST[/b][/color]\n"
-		txt += "Hold Uranium, Refinement, Warhead and Testing and put them on the table whenever you like. You only need to do this once.\n\n"
-		txt += "[color=#f2b134][b]ATTACKS[/b][/color]\n"
-		txt += "- [b]Short range[/b] (after a test): eliminate a player sitting immediately to your left or right.\n"
-		txt += "- [b]Long range[/b] (needs Short): eliminate anyone at the table.\n"
-		txt += "- [b]Counter-strike[/b] (the sheet's Second Strike; needs Short + Long): when you are eliminated, you immediately eliminate one player in retaliation.\n"
-		txt += "- [b]Superpower[/b] (all four Capabilities + a test): strike several countries.\n"
-		txt += "- Anyone can attack [b]out of turn[/b]. Here, nuclear exchanges follow the sheet's house rule - declared in [b]order of play[/b]: after every turn, starting with the player who just moved and going clockwise, each player may declare a test or an attack, or stand down. After any action the order starts again.\n\n"
-		txt += "[color=#f2b134][b]THE TABLE MAP[/b][/color]\n"
-		txt += "[b]Solid amber[/b] lines join neighbours - Short range reaches them. [b]Dashed[/b] lines join players across the table - only Long range reaches them. With 3 players everybody is a neighbour. When a player is eliminated the gap closes and the players either side become neighbours.\n\n"
-		txt += "[color=#f2b134][b]NOTES[/b][/color]\n"
-		txt += "- An attack shows (and locks on the table) the Capabilities it needs. An eliminated player's hand is revealed and set aside.\n"
-		txt += "- [b]Biowar[/b]: [b]Labs[/b] protect you from [b]Plague[/b]; a Plague attack eliminates all players without Labs. In [b]2000[/b] you need a test and all 4 Capabilities first; in [b]2035[/b] you just show Labs and play it."
-		vb.add_child(_rtl(txt, 15, Color("#c3ccd6")))
-		var strip0 := HFlowContainer.new()
-		strip0.add_theme_constant_override("h_separation", 6)
-		for k0 in ORDER:
-			strip0.add_child(_tex(k0, 56))
-		vb.add_child(strip0)
+		_rules_classic(vb)
 		return
 	txt += "[color=#f2b134][b]YOUR TURN[/b][/color]\n"
 	txt += "- [b]Research[/b]: draw a card. [b]Proliferation[/b]: give a card from your hand to another player. [b]Disarmament[/b]: return a card to the deck. (Click a card in your hand to give or return it.)\n"
@@ -1859,6 +1833,53 @@ func _rules_modal() -> void:
 	for k in ORDER:
 		strip.add_child(_tex(k, 56))
 	vb.add_child(strip)
+
+func _rules_h(vb: VBoxContainer, text: String) -> void:
+	vb.add_child(_lbl(text.to_upper(), 18, C_AMBER, HEAD))
+
+func _rules_p(vb: VBoxContainer, bb: String) -> void:
+	vb.add_child(_rtl(bb, 15, Color("#c3ccd6")))
+
+## A row of card pictures with an optional one-line caption under each.
+func _card_row(vb: VBoxContainer, keys: Array, notes: Array) -> void:
+	var fl := HFlowContainer.new()
+	fl.add_theme_constant_override("h_separation", 12)
+	fl.add_theme_constant_override("v_separation", 10)
+	for i in range(keys.size()):
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 3)
+		col.add_child(_tex(keys[i], 104))
+		if str(notes[i]) != "":
+			var l := _lbl(str(notes[i]), 12, C_MUT, null, true)
+			l.custom_minimum_size.x = 104
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			col.add_child(l)
+		fl.add_child(col)
+	vb.add_child(fl)
+
+func _rules_classic(vb: VBoxContainer) -> void:
+	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b] - play until one power is left standing, or everyone agrees to stop.")
+	_rules_h(vb, "Goal")
+	_rules_p(vb, "You are a country trying to become a [b]Nuclear Superpower[/b]. First [b]test a nuclear weapon[/b] with the four Technology cards, then collect the four Capability cards.")
+	_rules_h(vb, "Technology cards - the Nuclear Test")
+	_rules_p(vb, "Collect all four different Technologies, then put them on the table [b]whenever you like[/b] to show you have successfully tested a warhead. You only need to do this once. You cannot attack before you have tested.")
+	_card_row(vb, ["uranium", "refinement", "warhead", "testing"], ["", "", "", ""])
+	_rules_h(vb, "Capability cards - your weapons")
+	_card_row(vb, ["short", "long", "counter", "super"], [
+		"Short range: hit a player on your left or right",
+		"Long range: hit anyone (needs Short range)",
+		"Counter-strike (Second Strike): retaliate once after you are hit (needs Short + Long)",
+		"Superpower: all four Capabilities + a test"])
+	_rules_h(vb, "Set up")
+	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
+	_rules_h(vb, "Your turn: draw or trade")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: click a card in your hand and offer it [b]face-down[/b] to one other player. If they agree, they take your card [i]now[/i] - but they only give a card back on [i]their[/i] next turn, and they are [b]not obliged[/b] to. Trading partners can deceive! If the offer is turned down you may try another player or draw instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
+	_rules_h(vb, "Attacking")
+	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside.")
+	_rules_h(vb, "Nuclear exchanges")
+	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b]. Here they are declared in [b]order of play[/b] - the sheet's house rule. After every turn, starting with the player who just moved and going clockwise, each player may declare a Nuclear Test or an Attack, or stand down. After any action the round of declarations starts again. You are only asked when you have something to declare.")
+	_rules_h(vb, "The table map")
+	_rules_p(vb, "The map in the side panel shows who sits where. [b]Solid amber[/b] lines join neighbours - Short range reaches them. [b]Dashed[/b] lines join players across the table - only Long range reaches them. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 
 # ====================================================================== end
 func _finish() -> void:
@@ -2218,5 +2239,11 @@ func _shots() -> void:
 	_rules_modal()
 	await get_tree().create_timer(0.6).timeout
 	await _shot(d + "/8-rules.png")
+	modal_scroll.scroll_vertical = 650
+	await get_tree().create_timer(0.3).timeout
+	await _shot(d + "/9-rules-2.png")
+	modal_scroll.scroll_vertical = 1500
+	await get_tree().create_timer(0.3).timeout
+	await _shot(d + "/9-rules-3.png")
 	print("SHOTS DONE")
 	get_tree().quit(0)
