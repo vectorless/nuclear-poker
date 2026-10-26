@@ -77,8 +77,10 @@ func _batch(np: int, sets: Array) -> int:
 							n_tech += 1
 					if n_tech != 4:
 						err = "tested without 4 tech on table"
-				if not p.alive and not p.hand.is_empty():
-					err = "dead player has hand"
+				if not p.alive:
+					for c in p.hand:
+						if not c.pub:
+							err = "dead player's hand not revealed"
 			if err == "" and not extra_fires.is_empty():
 				err = "fired twice in one turn without Superpower: " + str(extra_fires[0])
 			if err == "" and g.debts.size() > np * 2:

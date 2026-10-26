@@ -77,6 +77,7 @@ var opp_lbls: Array = []
 var players_opt: OptionButton
 var sounds := {}
 var ambience: AudioStreamPlayer = null
+var zoom: TextureRect = null      # enlarged copy of the card under the pointer
 var debug_panel: Control = null      # F9: what the AI players know and think
 var music: Array = []             # one player per tension level, all running in sync
 var music_level := -1
@@ -140,8 +141,10 @@ class HandCard extends Control:
 		if tw:
 			tw.kill()
 		z_index = 20 if on else 0
-		tw = create_tween()
-		tw.tween_property(self, "position:y", base_y - (24.0 if on else 0.0), 0.12)
+		pivot_offset = Vector2(size.x / 2.0, size.y)      # grow up and out from the bottom edge
+		tw = create_tween().set_parallel(true)
+		tw.tween_property(self, "position:y", base_y - (14.0 if on else 0.0), 0.12)
+		tw.tween_property(self, "scale", Vector2.ONE * (1.35 if on else 1.0), 0.12).set_trans(Tween.TRANS_SINE)
 	func _gui_input(e: InputEvent) -> void:
 		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			picked.emit(cid, self)
@@ -440,7 +443,41 @@ func _tex(key: String, w: float) -> TextureRect:
 	t.custom_minimum_size = Vector2(w, w * 430.0 / 330.0)
 	t.tooltip_text = NPGame.INFO[key].name
 	t.mouse_filter = Control.MOUSE_FILTER_PASS
+	if w < 100.0:
+		t.mouse_entered.connect(_zoom_show.bind(t, key))
+		t.mouse_exited.connect(_zoom_hide)
+		t.tree_exiting.connect(_zoom_hide)
 	return t
+
+## Hovering a small card shows it large beside the pointer.
+func _zoom_show(src: Control, key: String) -> void:
+	_zoom_hide()
+	if not is_instance_valid(src) or not src.is_visible_in_tree() or get_viewport().gui_is_dragging():
+		return
+	var zw := 210.0
+	var zh := zw * 430.0 / 330.0
+	zoom = TextureRect.new()
+	zoom.texture = TEX[key]
+	zoom.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	zoom.stretch_mode = TextureRect.STRETCH_SCALE
+	zoom.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	zoom.size = Vector2(zw, zh)
+	zoom.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var r := src.get_global_rect()
+	var vp := get_viewport_rect().size
+	var x := r.end.x + 12.0
+	if x + zw > vp.x - 8.0:
+		x = r.position.x - zw - 12.0
+	var y := clampf(r.get_center().y - zh / 2.0, 8.0, vp.y - zh - 8.0)
+	zoom.position = Vector2(maxf(8.0, x), y)
+	zoom.modulate.a = 0.0
+	fx_root.add_child(zoom)
+	zoom.create_tween().tween_property(zoom, "modulate:a", 1.0, 0.1)
+
+func _zoom_hide() -> void:
+	if zoom != null and is_instance_valid(zoom):
+		zoom.queue_free()
+	zoom = null
 
 func _clear(n: Node) -> void:
 	for c in n.get_children():
@@ -1307,12 +1344,7 @@ func _seat(p: NPGame.Player) -> Control:
 	vb.add_child(_zone("On the table", tbl, "nothing yet"))
 	vb.add_child(_trade_zone(p, mini_w))
 	if not p.alive:
-		pc.modulate = Color(0.55, 0.55, 0.55)
-		var ov := _lbl("ELIMINATED", 26, Color("#d0604a"), HEAD)
-		ov.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		ov.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		ov.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pc.add_child(ov)
+		pc.modulate = Color(0.8, 0.78, 0.74)      # dimmed, but their revealed hand stays readable
 	_pass_through(pc)
 	return pc
 
@@ -2021,7 +2053,8 @@ func _disarm_modal() -> void:
 	var y := _btn("Disarm", "danger")
 	y.pressed.connect(func():
 		_close_modal()
-		G.disarm_caps(ME)
+		if not G.disarm_caps(ME):
+			_toast("Answer the decision in front of you first, then you can disarm.")
 		_after_human())
 	var n := _btn("Keep my weapons")
 	n.pressed.connect(_close_modal)
@@ -2090,7 +2123,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Your turn: draw or trade")
 	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive - but the other powers [b]remember[/b]: break deals and they will trust you less, trade with you less, and be quicker to threaten or attack you. Deal honestly, again and again, and a partner comes to see you as an [b]ally[/b]: more willing to trade, more likely to keep its word, slower to turn its weapons on you. Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
-	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent cards leave the game. Only a [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside, with the spent weapons.")
+	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent cards leave the game. Only a [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is turned face up and stays on show in their seat. Spent weapons go to the set-aside pile.")
 	_rules_h(vb, "Threats and disarming")
 	_rules_p(vb, "Nuclear powers can use the [b]threat of attack[/b]. In the exchange window, press [b]Threaten...[/b] and name a player you could attack: they must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up. Anyone can also [b]Disarm[/b] on their own at [b]any time[/b], on or off their turn, returning all their Capability cards to the deck. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Nuclear exchanges")
@@ -2658,6 +2691,24 @@ func _shots() -> void:
 	await _shot(d + "/0-menu.png")
 	await _stage("4", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
 	await _shot(d + "/1-board4.png")
+	# hover: a small table card shows large; a hand card grows
+	var small: Control = null
+	for n in board.find_children("*", "TextureRect", true, false):
+		if n.custom_minimum_size.x < 60.0 and n.is_visible_in_tree() and n.get_global_rect().position.y > 200:
+			small = n
+			break
+	if small != null:
+		_mouse(small.get_global_rect().get_center(), false, false, true)
+		await get_tree().create_timer(0.3).timeout
+		await _shot(d + "/1h-hover-small.png")
+	var hcz := _first_hand_card()
+	if hcz != null:
+		var hr2 := hcz.get_global_rect()
+		_mouse(Vector2(hr2.position.x + 20, minf(hr2.position.y + 30, 705)), false, false, true)
+		await get_tree().create_timer(0.3).timeout
+		await _shot(d + "/1i-hover-hand.png")
+		_mouse(Vector2(640, 20), false, false, true)
+		await get_tree().create_timer(0.2).timeout
 	_toggle_debug()
 	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/8-debug.png")
@@ -2762,5 +2813,12 @@ func _shots() -> void:
 	modal_scroll.scroll_vertical = 1500
 	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/9-rules-3.png")
+	# an eliminated player keeps their revealed hand on show
+	await _stage("4", ["uranium", "short", "warhead"], false)
+	G.kill([G.players[2]], {})
+	G.settle()
+	_render()
+	await get_tree().create_timer(1.6).timeout
+	await _shot(d + "/9-eliminated.png")
 	print("SHOTS DONE")
 	get_tree().quit(0)

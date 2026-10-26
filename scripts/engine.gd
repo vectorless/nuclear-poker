@@ -354,9 +354,8 @@ func kill(victims: Array, by_map: Dictionary) -> void:
 			msg += " Their hand is revealed: %s." % ", ".join(names)
 		log_msg(msg, "death")
 		for c in v.hand:
-			c.pub = true
-			out.append(c)
-		v.hand = []
+			c.pub = true      # the hand is turned face up and stays on show in their seat
+
 		event.emit("death", {"p": v, "by": killer})
 		if cap:
 			counter_q.append({"p": v, "by": killer})
@@ -746,8 +745,12 @@ func _return_caps(t: Player) -> Array:
 	return names
 
 ## Voluntary disarmament - allowed at any time, on or off your turn.
+## Voluntary disarmament - allowed at any time, also while a trade or deal is waiting for an answer
+## (only not in the middle of a counter-strike or threat decision, which must be answered first).
 func disarm_caps(p: Player) -> bool:
-	if over or not p.alive or not prompt.is_empty():
+	if over or not p.alive:
+		return false
+	if not prompt.is_empty() and not str(prompt.get("type", "")) in ["trade", "deal"]:
 		return false
 	if caps_held(p).is_empty():
 		return false
