@@ -374,6 +374,12 @@ func _rtl(bb: String, fsize := 15, color := C_INK) -> RichTextLabel:
 	r.text = bb
 	return r
 
+## A button that stretches to share the width of its row, at a fixed height.
+func _big(b: Button, h: float) -> Button:
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.custom_minimum_size.y = h
+	return b
+
 func _btn(text: String, kind := "default", fsize := 16) -> Button:
 	var b := Button.new()
 	b.text = text.to_upper()
@@ -1448,7 +1454,7 @@ func _banner() -> Control:
 		bd = Color("#7d2a24")
 	var s := _sb(bg, bd, 1, 10, 10)
 	pc.add_theme_stylebox_override("panel", s)
-	pc.custom_minimum_size.y = 112      # fixed: text + a row of buttons, so the board below never jumps
+	pc.custom_minimum_size.y = 124      # fixed: text + a row of buttons, so the board below never jumps
 	var hb := HBoxContainer.new()
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	hb.add_theme_constant_override("separation", 12)
@@ -1674,21 +1680,22 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		var dd: Dictionary = G._debts_of(ME)[0]
 		var cr: NPGame.Player = G.players[dd.from]
 		var pl = G._trade_card(ME, int(dd.pledge))
-		var dv := _btn("Deliver %s to %s" % [NPGame.INFO[pl.key].name if pl != null else "the card", cr.name], "primary")
+		var dv := _big(_btn("Deliver %s" % (NPGame.INFO[pl.key].name if pl != null else "the card"), "primary", 18), 56.0)
+		dv.tooltip_text = "Give the pledged card to %s, as promised." % cr.name
 		dv.pressed.connect(func():
 			G.honour(ME)
 			_after_human())
 		bar.add_child(dv)
 		btn["deliver"] = dv
-		var rb := _btn("Break the deal - keep it", "danger")
+		var rb := _big(_btn("Break the deal", "danger", 18), 56.0)
+		rb.tooltip_text = "Keep the card. %s has already given you theirs - and will remember." % cr.name
 		rb.pressed.connect(func():
 			G.renege(ME)
 			_after_human())
 		bar.add_child(rb)
 		btn["renege"] = rb
-		bar.add_child(_lbl("%s has already given you their card" % cr.name, 13, C_MUT))
 	elif G.phase == "play" and G.cur() == ME:
-		var rb2 := _btn("Research", "primary")
+		var rb2 := _big(_btn("Research", "primary", 30), 76.0)      # your turn's main action fills the box
 		rb2.disabled = not L.can_research
 		rb2.pressed.connect(_act_research)
 		bar.add_child(rb2)
@@ -1703,28 +1710,27 @@ func _classic_actions(bar: HFlowContainer) -> void:
 			bar.add_child(sk)
 			btn["skip"] = sk
 	elif G.phase == "war" and _war_peek() == ME.id:
-		var sd := _btn("Stand down")
+		var sd := _big(_btn("Stand down", "default", 18), 56.0)
 		sd.pressed.connect(func():
 			G.war_declare(ME, {"kind": "pass"})
 			_after_human())
 		bar.add_child(sd)
 		btn["stand"] = sd
-		var tb := _btn("Nuclear Test")
+		var tb := _big(_btn("Nuclear Test", "default", 18), 56.0)
 		tb.disabled = not L.can_test
 		tb.pressed.connect(_act_test)
 		bar.add_child(tb)
 		btn["test"] = tb
-		var ab := _btn("Attack...", "danger")
+		var ab := _big(_btn("Attack...", "danger", 18), 56.0)
 		ab.disabled = L.attacks.is_empty()
 		ab.pressed.connect(_attack_modal)
 		bar.add_child(ab)
 		btn["attack"] = ab
-		var thb := _btn("Threaten...", "danger")
+		var thb := _big(_btn("Threaten...", "danger", 18), 56.0)
 		thb.disabled = G.threat_targets(ME).is_empty()
 		thb.pressed.connect(_threaten_modal)
 		bar.add_child(thb)
 		btn["threaten"] = thb
-		bar.add_child(_lbl("choose one", 13, C_MUT))
 
 
 func _render_side() -> void:
