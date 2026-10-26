@@ -32,6 +32,18 @@ TRACKS = {
 }
 
 
+def normalize(path, lufs):
+    """Level the file to a target loudness with ffmpeg (if installed), so sounds sit together."""
+    import shutil, subprocess
+    if not shutil.which("ffmpeg"):
+        return
+    tmp = path + ".norm.mp3"
+    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", path, "-af",
+                        "loudnorm=I=%s:TP=-1.5:LRA=11" % lufs, "-ar", "44100", "-b:a", "128k", tmp])
+    if r.returncode == 0:
+        os.replace(tmp, path)
+
+
 def find_key(args):
     if "--key-file" in args:
         i = args.index("--key-file")
@@ -71,6 +83,7 @@ def main():
                 with urllib.request.urlopen(req, timeout=600) as r:
                     data = r.read()
                 open(path, "wb").write(data)
+                normalize(path, -18)
                 print(name, "ok", len(data), "bytes", "%.0fs" % (time.time() - t0), flush=True)
                 break
             except urllib.error.HTTPError as e:

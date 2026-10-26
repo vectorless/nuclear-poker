@@ -443,7 +443,7 @@ func play_skip(p: Player) -> bool:
 
 
 # ---------------------------------------------------------------- trading
-# Draw OR trade each turn. Every trade happens in the open, in each player's TRADE AREA, face-up:
+# Draw OR trade each turn. Trades are FACE DOWN: only a card's owner knows what it is, until it arrives.
 #   1. you place a card in your trade area, addressed to one player;
 #   2. they either decline, or answer by placing a card of their own in THEIR trade area;
 #   3. you accept or decline that pair. If you accept, your card goes to them at once, but their card
@@ -481,7 +481,7 @@ func _void_debts() -> void:
 		keep.append(d)
 	debts = keep
 
-## Start a deal: `p` puts a card face-up in their trade area, addressed to `target_id`.
+## Start a deal: `p` puts a card face down in their trade area, addressed to `target_id`.
 ## Returns "declined" | "prompt" (a human must answer) | "accepted" | "invalid".
 func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	if phase != "play" or not p.alive or cur() != p or not prompt.is_empty():
@@ -494,13 +494,13 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	var x = _take_hand_card(p, card_id)
 	if x == null:
 		return "invalid"
-	x.pub = true
+	x.pub = false      # face down: only p knows what it is
 	p.trade.append(x)
 	trade_tried = true
-	log_msg("%s offers %s in trade: %s." % [p.name, t.name, card_name(x)])
+	log_msg("%s offers %s a card, face down." % [p.name, t.name])
 	event.emit("trade_offer", {"from": p, "to": t, "c": x})
 	if t.human:
-		prompt = {"type": "trade", "player": t, "from": p, "card_id": x.id, "card_key": x.key}
+		prompt = {"type": "trade", "player": t, "from": p, "card_id": x.id}      # no card key: it is face down
 		return "prompt"
 	var yid := ai_counter_offer(t, p, x)
 	if yid < 0:
@@ -511,16 +511,16 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 
 func _place_counter(t: Player, yid: int, p: Player, x: Dictionary) -> void:
 	var y = _take_hand_card(t, yid)
-	y.pub = true
+	y.pub = false
 	t.trade.append(y)
-	log_msg("%s answers with %s." % [t.name, card_name(y)])
+	log_msg("%s answers with a card of their own, face down." % t.name)
 	event.emit("trade_counter", {"from": t, "to": p, "c": y})
 
 ## The offerer weighs the pair (AI) or is asked (human).
 func _decide_pair(p: Player, t: Player, x: Dictionary) -> String:
 	var y = t.trade[t.trade.size() - 1]
 	if p.human:
-		prompt = {"type": "deal", "player": p, "partner": t, "x_id": x.id, "y_id": y.id, "x_key": x.key, "y_key": y.key}
+		prompt = {"type": "deal", "player": p, "partner": t, "x_id": x.id, "y_id": y.id}
 		return "prompt"
 	if ai_accept_pair(p, t, x, y):
 		_finish_deal(p, t, x, y)
@@ -546,11 +546,11 @@ func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
 		if p.trade[i].id == x.id:
 			p.trade.pop_at(i)
 			break
-	x.pub = true
+	x.pub = false
 	t.hand.append(x)
 	debts.append({"from": p.id, "to": t.id, "got": x.id, "pledge": y.id})
 	_shift_trust(t, p, 0.05)      # they handed their card over first
-	log_msg("%s trades %s to %s. %s has pledged %s - to be delivered on %s's next turn." % [p.name, card_name(x), t.name, t.name, card_name(y), t.name])
+	log_msg("%s hands a card to %s. %s has pledged a card in return - to be delivered on %s's next turn." % [p.name, t.name, t.name, t.name])
 	event.emit("give", {"from": p, "to": t, "c": x})
 
 ## Human answer to an offer: the card (from their hand) to offer back, or -1 to decline.
@@ -607,9 +607,9 @@ func honour(p: Player) -> bool:
 	debts.erase(d)
 	if y != null:
 		p.trade.erase(y)
-		y.pub = true
+		y.pub = false
 		to.hand.append(y)
-		log_msg("%s DELIVERS %s to %s - the trade is complete." % [p.name, card_name(y), to.name])
+		log_msg("%s DELIVERS the pledged card to %s - the trade is complete." % [p.name, to.name])
 		event.emit("give", {"from": p, "to": to, "c": y})
 		_deal_outcome(p, to, true)
 	_next_honour()
@@ -636,6 +636,18 @@ func _next_honour() -> void:
 	if _debts_of(cur()).is_empty():
 		phase = "play"
 
+## What a card you cannot see is worth to p on average (trades are face down).
+func _expected_gain(p: Player) -> float:
+	var B := belief(p)
+	var n := float(B.N)
+	if n <= 0.0:
+		return 0.5
+	var s := 0.0
+	for k in B.cnt:
+		if int(B.cnt[k]) > 0:
+			s += float(B.cnt[k]) / n * _gain(p, {"key": k})
+	return s
+
 func _gain(p: Player, c: Dictionary) -> float:
 	var dup := holds(p, c.key)
 	var k: String = INFO[c.key].kind
@@ -651,15 +663,15 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 		return -1
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
+	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_expected_gain(t) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
 	if rng.randf() >= clampf(pr, 0.03, 0.95):
 		return -1
 	var y = least_useful(t)
 	return y.id if y != null else -1
 
-## AI judging a face-up pair: its own card against the one it would receive.
+## AI judging a deal: its own card against a face-down promise (expected value x trust).
 func ai_accept_pair(p: Player, t: Player, x: Dictionary, y: Dictionary) -> bool:
-	var pr := 0.5 + 0.9 * (_gain(p, y) * _pledge_faith(p, t) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
+	var pr := 0.5 + 0.9 * (_expected_gain(p) * _pledge_faith(p, t) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
 	return rng.randf() < clampf(pr, 0.05, 0.95)
 
 func ai_honour(p: Player) -> void:
@@ -885,8 +897,9 @@ func _unseen(viewer: Player) -> Dictionary:
 	for pl in players:
 		for c in pl.table:
 			cnt[c.key] -= 1
-		for c in pl.trade:
-			cnt[c.key] -= 1
+		if pl == viewer:
+			for c in pl.trade:      # trade cards are face down: you only know your own
+				cnt[c.key] -= 1
 		if pl != viewer:
 			for c in pl.hand:
 				if c.pub:
@@ -918,7 +931,7 @@ func bp(B: Dictionary, X: Player, key: String) -> float:
 	for c in X.table:
 		if c.key == key:
 			return 1.0
-	var h := 0
+	var h := X.trade.size()      # face-down trade cards are still theirs, and unknown
 	for c in X.hand:
 		if c.key == key and c.pub:
 			return 1.0

@@ -37,6 +37,22 @@ SFX = {
 }
 
 
+# target loudness (LUFS) per sound; everything else -18
+LEVEL = {"click": -24, "draw": -24, "deal": -21, "your_turn": -21, "trade_offer": -21, "trade_counter": -21,
+         "attack": -16, "death": -16, "test": -16, "ambience": -30}
+
+def normalize(path, lufs):
+    """Level the file to a target loudness with ffmpeg (if installed), so sounds sit together."""
+    import shutil, subprocess
+    if not shutil.which("ffmpeg"):
+        return
+    tmp = path + ".norm.mp3"
+    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", path, "-af",
+                        "loudnorm=I=%s:TP=-1.5:LRA=11" % lufs, "-ar", "44100", "-b:a", "128k", tmp])
+    if r.returncode == 0:
+        os.replace(tmp, path)
+
+
 def find_key(args):
     if "--key-file" in args:
         i = args.index("--key-file")
@@ -69,6 +85,7 @@ def main():
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
                 open(path, "wb").write(r.read())
+            normalize(path, LEVEL.get(name, -18))
             print(name, "ok", flush=True)
         except urllib.error.HTTPError as e:
             print(name, "HTTP", e.code, e.read()[:300], flush=True)
