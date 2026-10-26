@@ -37,6 +37,7 @@ class Player:
 	var persona: Dictionary = {}
 	var hand: Array = []
 	var table: Array = []
+	var trade: Array = []             # classic: face-up cards in this player's trade area
 	var alive: bool = true
 	var tested: bool = false
 	var kills: int = 0
@@ -338,6 +339,9 @@ func kill(victims: Array, by_map: Dictionary) -> void:
 		var by_other: bool = killer != null and killer != v
 		if by_other:
 			killer.kills += 1
+		for tc in v.trade:
+			v.hand.append(tc)
+		v.trade = []
 		var names: Array = v.hand.map(func(c): return card_name(c))
 		var msg := "%s is ELIMINATED%s." % [v.name, (" by " + killer.name) if by_other else ""]
 		if not names.is_empty():
@@ -457,59 +461,148 @@ func play_skip(p: Player) -> bool:
 
 
 # ---------------------------------------------------------------- classic rules
-# Draw OR trade each turn. A trade is a face-down card offered to one player; if they agree the card
-# changes hands at once, and they owe one back - but only when their own turn comes, and they may
-# DECEIVE. After each turn there is an exchange window: starting with the player who just played and
-# going clockwise, anyone may test or attack ("nuclear exchanges in order of play" house rule).
+# Draw OR trade each turn. Every trade happens in the open, in each player's TRADE AREA, face-up:
+#   1. you place a card in your trade area, addressed to one player;
+#   2. they either decline, or answer by placing a card of their own in THEIR trade area;
+#   3. you accept or decline that pair. If you accept, your card goes to them at once, but their card
+#      stays in their trade area as a pledge and only reaches you on THEIR next turn - when they may
+#      deliver it or break the deal (deception).
+# A refusal never costs a turn: you may offer again (to anyone) or draw instead.
+# After each turn there is an exchange window: starting with the player who just played and going
+# clockwise, anyone may test or attack ("nuclear exchanges in order of play" house rule).
 func _debts_of(p: Player) -> Array:
 	return debts.filter(func(d): return d.to == p.id)
 
-func _void_debts() -> void:
-	debts = debts.filter(func(d):
-		if not by_id(d.from).alive or not by_id(d.to).alive:
-			return false
-		return not (d.to == turn and by_id(d.to).hand.is_empty()))
+func _trade_card(p: Player, card_id: int):
+	for c in p.trade:
+		if c.id == card_id:
+			return c
+	return null
 
-## `face_up`: the offered card is shown to the whole table (otherwise it is passed face-down).
-## Returns "accepted" | "declined" | "prompt" (a human must answer) | "invalid"
-func trade_offer(p: Player, card_id: int, target_id: int, face_up := false) -> String:
+## Put a card from a player's trade area back in their hand.
+func _recall(p: Player, card_id: int) -> void:
+	for i in range(p.trade.size()):
+		if p.trade[i].id == card_id:
+			p.hand.append(p.trade.pop_at(i))
+			return
+
+func _void_debts() -> void:
+	var keep: Array = []
+	for d in debts:
+		var a := by_id(d.from)
+		var b := by_id(d.to)
+		var dead: bool = not a.alive or not b.alive
+		if dead:
+			if b.alive:
+				_recall(b, int(d.pledge))      # the pledged card goes home
+			continue
+		keep.append(d)
+	debts = keep
+
+## Start a deal: `p` puts a card face-up in their trade area, addressed to `target_id`.
+## Returns "declined" | "prompt" (a human must answer) | "accepted" | "invalid".
+func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	if mode != "classic" or phase != "play" or not p.alive or cur() != p or not prompt.is_empty():
 		return "invalid"
 	if target_id < 0 or target_id >= players.size():
 		return "invalid"
 	var t := by_id(target_id)
-	if t == p or not t.alive:
+	if t == p or not t.alive or not p.trade.is_empty():
 		return "invalid"
-	var card = null
-	for c in p.hand:
-		if c.id == card_id:
-			card = c
-	if card == null:
+	var x = _take_hand_card(p, card_id)
+	if x == null:
 		return "invalid"
+	x.pub = true
+	p.trade.append(x)
 	trade_tried = true
+	log_msg("%s offers %s in trade: %s, face-up." % [p.name, t.name, card_name(x)])
+	event.emit("trade_offer", {"from": p, "to": t, "c": x})
 	if t.human:
-		log_msg("%s offers %s a %s in trade." % [p.name, t.name, ("face-up " + card_name(card)) if face_up else "face-down card"])
-		prompt = {"type": "trade", "player": t, "from": p, "card_id": card_id, "face_up": face_up, "card_key": card.key}
+		prompt = {"type": "trade", "player": t, "from": p, "card_id": x.id, "card_key": x.key}
 		return "prompt"
-	if ai_accept_trade(t, p, card if face_up else null):
-		_complete_offer(p, t, card_id, face_up)
+	var yid := ai_counter_offer(t, p, x)
+	if yid < 0:
+		_cancel_offer(p, t, "%s declines to trade." % t.name)
+		return "declined"
+	_place_counter(t, yid, p, x)
+	return _decide_pair(p, t, x)
+
+func _place_counter(t: Player, yid: int, p: Player, x: Dictionary) -> void:
+	var y = _take_hand_card(t, yid)
+	y.pub = true
+	t.trade.append(y)
+	log_msg("%s answers with %s, face-up." % [t.name, card_name(y)])
+	event.emit("trade_counter", {"from": t, "to": p, "c": y})
+
+## The offerer weighs the pair (AI) or is asked (human).
+func _decide_pair(p: Player, t: Player, x: Dictionary) -> String:
+	var y = t.trade[t.trade.size() - 1]
+	if p.human:
+		prompt = {"type": "deal", "player": p, "partner": t, "x_id": x.id, "y_id": y.id, "x_key": x.key, "y_key": y.key}
+		return "prompt"
+	if ai_accept_pair(p, t, x, y):
+		_finish_deal(p, t, x, y)
 		_after_play()
 		return "accepted"
-	log_msg("%s turns down %s's trade offer." % [t.name, p.name], "quiet")
+	_cancel_offer(p, t, "%s turns down %s's counter-offer." % [p.name, t.name])
 	return "declined"
 
-func answer_trade(accept: bool) -> bool:
+func _cancel_offer(p: Player, t: Player, msg: String) -> void:
+	for c in p.trade.duplicate():
+		_recall(p, c.id)
+	for c in t.trade.duplicate():
+		var pledged := false
+		for d in debts:
+			if d.pledge == c.id:
+				pledged = true
+		if not pledged:
+			_recall(t, c.id)
+	log_msg(msg, "quiet")
+
+func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
+	for i in range(p.trade.size()):
+		if p.trade[i].id == x.id:
+			p.trade.pop_at(i)
+			break
+	x.pub = true
+	t.hand.append(x)
+	debts.append({"from": p.id, "to": t.id, "got": x.id, "pledge": y.id})
+	log_msg("%s trades %s to %s. %s has pledged %s - to be delivered on %s's next turn." % [p.name, card_name(x), t.name, t.name, card_name(y), t.name])
+	event.emit("give", {"from": p, "to": t, "c": x})
+
+## Human answer to an offer: the card (from their hand) to offer back, or -1 to decline.
+func answer_trade(counter_id: int) -> bool:
 	if prompt.is_empty() or prompt.get("type", "") != "trade":
 		return false
 	var pr := prompt
-	prompt = {}
 	var p: Player = pr.from
 	var t: Player = pr.player
-	if accept and p.alive and _take_hand_card_peek(p, int(pr.card_id)):
-		_complete_offer(p, t, int(pr.card_id), bool(pr.get("face_up", false)))
+	if counter_id >= 0 and not _take_hand_card_peek(t, counter_id):
+		return false
+	prompt = {}
+	var x = _trade_card(p, int(pr.card_id))
+	if counter_id < 0 or x == null or not p.alive:
+		_cancel_offer(p, t, "%s declines to trade." % t.name)
+		return true
+	_place_counter(t, counter_id, p, x)
+	_decide_pair(p, t, x)
+	return true
+
+## Human answer to a counter-offer.
+func answer_deal(accept: bool) -> bool:
+	if prompt.is_empty() or prompt.get("type", "") != "deal":
+		return false
+	var pr := prompt
+	prompt = {}
+	var p: Player = pr.player
+	var t: Player = pr.partner
+	var x = _trade_card(p, int(pr.x_id))
+	var y = _trade_card(t, int(pr.y_id))
+	if accept and x != null and y != null:
+		_finish_deal(p, t, x, y)
 		_after_play()
 	else:
-		log_msg("%s turns down %s's trade offer." % [t.name, p.name], "quiet")
+		_cancel_offer(p, t, "%s turns down %s's counter-offer." % [p.name, t.name])
 	return true
 
 func _take_hand_card_peek(p: Player, card_id: int) -> bool:
@@ -518,33 +611,27 @@ func _take_hand_card_peek(p: Player, card_id: int) -> bool:
 			return true
 	return false
 
-func _complete_offer(p: Player, t: Player, card_id: int, face_up := false) -> void:
-	var c = _take_hand_card(p, card_id)
-	c.pub = face_up
-	t.hand.append(c)
-	debts.append({"from": p.id, "to": t.id, "got": c.id})
-	log_msg("%s trades a %s to %s. %s owes one back on their next turn." % [p.name, ("face-up " + card_name(c)) if face_up else "face-down card", t.name, t.name])
-	event.emit("give", {"from": p, "to": t, "c": c})
-
-func honour(p: Player, card_id: int, face_up := false) -> bool:
+## The pledged card: deliver it to the creditor (on your own turn)...
+func honour(p: Player) -> bool:
 	if phase != "honour" or cur() != p:
 		return false
 	var ds := _debts_of(p)
 	if ds.is_empty():
 		return false
 	var d: Dictionary = ds[0]
-	var c = _take_hand_card(p, card_id)
-	if c == null:
-		return false
-	c.pub = face_up
+	var y = _trade_card(p, int(d.pledge))
 	var to := by_id(d.from)
-	to.hand.append(c)
 	debts.erase(d)
-	log_msg("%s completes the trade with %s (%s)." % [p.name, to.name, ("face-up " + card_name(c)) if face_up else "face-down card"])
-	event.emit("give", {"from": p, "to": to, "c": c})
+	if y != null:
+		p.trade.erase(y)
+		y.pub = true
+		to.hand.append(y)
+		log_msg("%s DELIVERS %s to %s - the trade is complete." % [p.name, card_name(y), to.name])
+		event.emit("give", {"from": p, "to": to, "c": y})
 	_next_honour()
 	return true
 
+## ... or break the deal and take it back.
 func renege(p: Player) -> bool:
 	if phase != "honour" or cur() != p:
 		return false
@@ -553,7 +640,8 @@ func renege(p: Player) -> bool:
 		return false
 	var d: Dictionary = ds[0]
 	debts.erase(d)
-	log_msg("%s does NOT complete the trade with %s - deceived!" % [p.name, by_id(d.from).name], "reveal")
+	_recall(p, int(d.pledge))
+	log_msg("%s BREAKS the deal with %s - %s is kept. Deceived!" % [p.name, by_id(d.from).name, "the pledged card"], "reveal")
 	_next_honour()
 	return true
 
@@ -575,26 +663,33 @@ func _gain(p: Player, c: Dictionary) -> float:
 		return 0.25 if dup else {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key]
 	return 0.25 if dup else 0.85
 
-## `card` is only passed when it was offered face-up (a face-down card is accepted blind).
-func ai_accept_trade(t: Player, from: Player, card = null) -> bool:
+## AI answering an offer: the id of the card it offers back, or -1 to decline.
+func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
+	if t.hand.is_empty():
+		return -1
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	var pr := float(t.persona.trade) + 0.25 * thr
-	if card != null:
-		pr += 0.6 * (_gain(t, card) - 0.5)
-	return rng.randf() < clampf(pr, 0.03, 0.95)
+	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_gain(t, x) - 0.5)
+	if rng.randf() >= clampf(pr, 0.03, 0.95):
+		return -1
+	var y = least_useful(t)
+	return y.id if y != null else -1
+
+## AI judging a face-up pair: its own card against the one it would receive.
+func ai_accept_pair(p: Player, t: Player, x: Dictionary, y: Dictionary) -> bool:
+	var pr := 0.5 + 0.9 * (_gain(p, y) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
+	return rng.randf() < clampf(pr, 0.05, 0.95)
 
 func ai_honour(p: Player) -> void:
 	var ds := _debts_of(p)
 	if ds.is_empty():
 		return
 	var honest := float(p.persona.honest)
-	for c in p.hand:
-		if c.id == ds[0].got and usefulness(p, c) > 0.85:
-			honest *= 0.6
-	if rng.randf() < honest and not p.hand.is_empty():
-		var lu = least_useful(p)
-		honour(p, lu.id, rng.randf() < float(p.persona.honest) * 0.5)
+	var y = _trade_card(p, int(ds[0].pledge))
+	if y != null and usefulness(p, y) > 0.85:
+		honest *= 0.6
+	if rng.randf() < honest:
+		honour(p)
 	else:
 		renege(p)
 
@@ -616,10 +711,11 @@ func ai_play_classic(p: Player) -> bool:
 		var tries: Array = keyed.map(func(e): return e.o)
 		if not deck.is_empty():
 			tries = tries.slice(0, 1)
-		var c = least_useful(p)
-		var up: bool = rng.randf() < float(p.persona.honest) * 0.5
 		for t in tries:
-			var res := trade_offer(p, c.id, t.id, up)
+			var c = least_useful(p)
+			if c == null:
+				break
+			var res := trade_offer(p, c.id, t.id)
 			if res == "accepted" or res == "prompt":
 				return true
 	if not deck.is_empty():
@@ -910,6 +1006,8 @@ func _unseen(viewer: Player) -> Dictionary:
 		cnt[c.key] -= 1
 	for pl in players:
 		for c in pl.table:
+			cnt[c.key] -= 1
+		for c in pl.trade:
 			cnt[c.key] -= 1
 		if pl != viewer:
 			for c in pl.hand:

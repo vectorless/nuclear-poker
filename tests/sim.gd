@@ -6,7 +6,7 @@ extends SceneTree
 func _total(g: NPGame) -> int:
 	var n := g.deck.size() + g.out.size()
 	for p in g.players:
-		n += p.hand.size() + p.table.size()
+		n += p.hand.size() + p.table.size() + p.trade.size()
 	return n
 
 func _init() -> void:
@@ -43,11 +43,11 @@ func _batch(mode: String, np: int, bio: String, sets: Array) -> int:
 			elif t == "test":
 				kinds["test"] += 1
 			elif t == "log":
-				if d.text.contains("owes one back"):
+				if d.text.contains("has pledged"):
 					trades.offers += 1
-				elif d.text.contains("completes the trade"):
+				elif d.text.contains("DELIVERS"):
 					trades.honoured += 1
-				elif d.text.contains("does NOT complete"):
+				elif d.text.contains("BREAKS the deal"):
 					trades.reneged += 1
 				elif d.text.contains(" threatens "):
 					trades.threats += 1

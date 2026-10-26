@@ -823,6 +823,8 @@ func _pump() -> void:
 	if st == "prompt":
 		if str(G.prompt.get("type", "")) == "trade":
 			_trade_modal()
+		elif str(G.prompt.get("type", "")) == "deal":
+			_deal_modal()
 		elif str(G.prompt.get("type", "")) == "threat":
 			_threat_modal()
 		else:
@@ -996,6 +998,33 @@ func _zone(label: String, items: Array, empty_text: String) -> VBoxContainer:
 	vb.add_child(fl)
 	return vb
 
+## The face-up trade area of a seat: an offer waiting for an answer, or a card pledged to a partner.
+func _trade_zone(p: NPGame.Player, w: float) -> Control:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _sb(Color("#0f1a24"), Color("#2f5f8f"), 1, 8, 6))
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 3)
+	pc.add_child(vb)
+	vb.add_child(_lbl("TRADE AREA - face-up", 11, Color("#9fd2ff"), MONO))
+	var fl := HFlowContainer.new()
+	fl.add_theme_constant_override("h_separation", 6)
+	fl.custom_minimum_size.y = w * 430.0 / 330.0 + 2
+	for c in p.trade:
+		var tip := "Offered in a trade."
+		for d in G.debts:
+			if int(d.pledge) == int(c.id):
+				tip = "Pledged to %s - delivered on %s next turn (or the deal is broken)." % [G.players[d.from].name, "your" if p == ME else p.name + "'s"]
+		var cp := PanelContainer.new()
+		cp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#9fd2ff"), 2, 5, 0))
+		var tx := _tex(c.key, w)
+		tx.tooltip_text = NPGame.INFO[c.key].name + " - " + tip
+		cp.add_child(tx)
+		fl.add_child(cp)
+	if p.trade.is_empty():
+		fl.add_child(_lbl("no offer", 12, C_MUT, MONO))
+	vb.add_child(fl)
+	return pc
+
 func _mini_pub(key: String) -> Control:
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), C_AMBER, 2, 5, 0))
@@ -1052,6 +1081,8 @@ func _seat(p: NPGame.Player) -> Control:
 	for c in p.table:
 		tbl.append(_tex(c.key, mini_w))
 	vb.add_child(_zone("On the table", tbl, "nothing yet"))
+	if G.mode == "classic":
+		vb.add_child(_trade_zone(p, mini_w))
 	if not p.alive:
 		pc.modulate = Color(0.55, 0.55, 0.55)
 		var ov := _lbl("ELIMINATED", 26, Color("#ff6a60"), HEAD)
@@ -1081,7 +1112,7 @@ func _banner() -> Control:
 		var wa := _war_peek()
 		if G.phase == "honour":
 			if G.cur() == ME and not G._debts_of(ME).is_empty():
-				text = "[b][color=#f2b134]A trade is due.[/color][/b] %s gave you a card. Click a card in your hand to hand one back - or deceive them." % G.players[G._debts_of(ME)[0].from].name
+				text = "[b][color=#f2b134]A trade is due.[/color][/b] You pledged a card to %s. Deliver it - or break the deal." % G.players[G._debts_of(ME)[0].from].name
 				tone = "you"
 			else:
 				text = "%s is deciding whether to honour a trade..." % G.cur().name
@@ -1239,6 +1270,8 @@ func _me_panel() -> Control:
 	hd.add_child(_spacer())
 	hd.add_child(_lbl("%d in hand" % ME.hand.size(), 12, C_MUT, MONO))
 	vb.add_child(hd)
+	if G.mode == "classic":
+		vb.add_child(_trade_zone(ME, mini_w * 1.35))
 	if not ME.table.is_empty():
 		var tr := HBoxContainer.new()
 		tr.add_theme_constant_override("separation", 8)
@@ -1365,14 +1398,22 @@ func _action_bar() -> Control:
 func _classic_actions(bar: HFlowContainer) -> void:
 	var L := G.legal(ME)
 	if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
-		var cr: NPGame.Player = G.players[G._debts_of(ME)[0].from]
-		var rb := _btn("Deceive %s - keep the card" % cr.name, "danger")
+		var dd: Dictionary = G._debts_of(ME)[0]
+		var cr: NPGame.Player = G.players[dd.from]
+		var pl = G._trade_card(ME, int(dd.pledge))
+		var dv := _btn("Deliver %s to %s" % [NPGame.INFO[pl.key].name if pl != null else "the card", cr.name], "primary")
+		dv.pressed.connect(func():
+			G.honour(ME)
+			_after_human())
+		bar.add_child(dv)
+		btn["deliver"] = dv
+		var rb := _btn("Break the deal - keep it", "danger")
 		rb.pressed.connect(func():
 			G.renege(ME)
 			_after_human())
 		bar.add_child(rb)
 		btn["renege"] = rb
-		bar.add_child(_lbl("or click a card in your hand to give it to %s" % cr.name, 13, C_MUT))
+		bar.add_child(_lbl("%s has already given you their card" % cr.name, 13, C_MUT))
 	elif G.phase == "play" and G.cur() == ME:
 		var rb2 := _btn("Research - draw a card", "primary")
 		rb2.disabled = not L.can_research
@@ -1573,36 +1614,16 @@ func _card_menu(cid: int, node: Control) -> void:
 	vb.add_child(_lbl(CARD_DESC[c.key], 12, C_MUT, null, true))
 	var any := false
 	if G.mode == "classic":
-		if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
-			var cr: NPGame.Player = G.players[G._debts_of(ME)[0].from]
-			vb.add_child(_lbl("Complete the trade: give this card to %s - face-up (everyone sees it) or face-down." % cr.name, 12, C_MUT, null, true))
-			var hr := HBoxContainer.new()
-			hr.add_theme_constant_override("separation", 6)
-			for fu in [true, false]:
-				var hb := _btn("Face-up" if fu else "Face-down", "primary" if fu else "default", 14)
-				hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				hb.pressed.connect(func():
-					G.honour(ME, cid, fu)
-					_after_human())
-				hr.add_child(hb)
-			vb.add_child(hr)
-			any = true
-		elif my_play:
-			vb.add_child(_lbl("Offer this card in a trade - face-up (everyone sees it) or face-down. If they agree they take it now, and owe you one back on their next turn (or deceive you).", 12, C_MUT, null, true))
+		if my_play and ME.trade.is_empty():
+			vb.add_child(_lbl("Offer this card in a trade. It goes face-up in your trade area; they may answer with a card of theirs, and you decide.", 12, C_MUT, null, true))
 			for o in G.others(ME):
-				vb.add_child(_lbl(o.name.to_upper(), 13, C_INK, HEAD))
-				var orow := HBoxContainer.new()
-				orow.add_theme_constant_override("separation", 6)
-				for fu in [true, false]:
-					var ob := _btn("Face-up" if fu else "Face-down", "default", 13)
-					ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-					ob.pressed.connect(func():
-						var res := G.trade_offer(ME, cid, o.id, fu)
-						if res == "declined":
-							_toast("%s declines your offer." % o.name)
-						_after_human())
-					orow.add_child(ob)
-				vb.add_child(orow)
+				var ob := _btn("Offer to " + o.name, "default", 14)
+				ob.pressed.connect(func():
+					var res := G.trade_offer(ME, cid, o.id)
+					if res == "declined":
+						_toast("No deal with %s - offer again, or draw instead." % o.name)
+					_after_human())
+				vb.add_child(ob)
 			any = true
 	elif not c.pub:
 		var rb := _btn("Reveal to everyone", "default", 14)
@@ -1782,30 +1803,77 @@ func _trade_modal() -> void:
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
 	var vb := _open_modal("Trade offer", false, true, false)
-	var up: bool = bool(pr.get("face_up", false))
-	vb.add_child(_rtl("[b]%s[/b] offers you a %s in trade.\n\nAccept, and the card is yours now - but you owe them one card back on your next turn, face-up or face-down as you choose (you may also deceive them, as they may deceive you). Decline, and nothing changes." % [pr.from.name, ("[b]%s[/b], face-up" % NPGame.INFO[pr.card_key].name) if up else "face-down card"], 15, Color("#c3ccd6")))
-	if up:
-		var cr := HBoxContainer.new()
-		cr.alignment = BoxContainer.ALIGNMENT_CENTER
-		cr.add_child(_tex(str(pr.card_key), 120))
-		vb.add_child(cr)
+	vb.add_child(_rtl("[b]%s[/b] offers you a [b]%s[/b] - face-up in their trade area.\n\nOffer one of your cards back, also face-up, and they decide. If they accept, their card is yours at once - but yours waits in your trade area and only reaches them on [b]your next turn[/b], when you can still break the deal. Or decline." % [pr.from.name, NPGame.INFO[pr.card_key].name], 15, Color("#c3ccd6")))
+	var cr := HBoxContainer.new()
+	cr.alignment = BoxContainer.ALIGNMENT_CENTER
+	cr.add_child(_tex(str(pr.card_key), 120))
+	vb.add_child(cr)
+	vb.add_child(_lbl("YOUR CARDS - choose what to offer back", 12, C_MUT, MONO))
+	var fl := HFlowContainer.new()
+	fl.add_theme_constant_override("h_separation", 10)
+	fl.add_theme_constant_override("v_separation", 8)
+	var seen := {}
+	var hand: Array = ME.hand.duplicate()
+	hand.sort_custom(func(a, b): return ORDER.find(a.key) < ORDER.find(b.key))
+	for c in hand:
+		if seen.has(c.key):
+			continue
+		seen[c.key] = true
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 4)
+		col.add_child(_tex(c.key, 84))
+		var ob := _btn("Offer this", "default", 13)
+		ob.pressed.connect(func():
+			_close_modal(true)
+			G.answer_trade(c.id)
+			_after_human())
+		col.add_child(ob)
+		fl.add_child(col)
+		modal_btns.append({"kind": "trade_counter", "button": ob})
+	vb.add_child(fl)
+	var n := _btn("Decline")
+	n.pressed.connect(func():
+		_close_modal(true)
+		G.answer_trade(-1)
+		_after_human())
+	vb.add_child(n)
+	modal_btns.append({"kind": "trade_no", "button": n})
+
+## You offered a card and they answered with one of theirs: accept the pair or not.
+func _deal_modal() -> void:
+	var pr := G.prompt
+	if pr.is_empty() or not pr.player.human or modal != null:
+		return
+	var vb := _open_modal("Their answer", false, true, false)
+	vb.add_child(_rtl("[b]%s[/b] answers your offer. Both cards are face-up.\n\nIf you accept, your card goes to them [b]now[/b], but theirs only reaches you on [b]their next turn[/b] - and they may break the deal. Decline, and you can offer again or draw instead." % pr.partner.name, 15, Color("#c3ccd6")))
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
-	var y := _btn("Accept", "primary")
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 28)
+	for side in [["YOU GIVE", pr.x_key, "now"], [pr.partner.name.to_upper() + " PLEDGES", pr.y_key, "on their next turn"]]:
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 4)
+		col.add_child(_lbl(side[0], 13, C_AMBER, HEAD))
+		col.add_child(_tex(str(side[1]), 120))
+		col.add_child(_lbl(NPGame.INFO[side[1]].name + " - " + side[2], 12, C_MUT, MONO))
+		row.add_child(col)
+	vb.add_child(row)
+	var brow := HBoxContainer.new()
+	brow.add_theme_constant_override("separation", 10)
+	var y := _btn("Accept the deal", "primary")
 	y.pressed.connect(func():
 		_close_modal(true)
-		G.answer_trade(true)
+		G.answer_deal(true)
 		_after_human())
 	var n := _btn("Decline")
 	n.pressed.connect(func():
 		_close_modal(true)
-		G.answer_trade(false)
+		G.answer_deal(false)
 		_after_human())
-	row.add_child(y)
-	row.add_child(n)
-	vb.add_child(row)
-	modal_btns.append({"kind": "trade_yes", "button": y})
-	modal_btns.append({"kind": "trade_no", "button": n})
+	brow.add_child(y)
+	brow.add_child(n)
+	vb.add_child(brow)
+	modal_btns.append({"kind": "deal_yes", "button": y})
+	modal_btns.append({"kind": "deal_no", "button": n})
 
 ## You are being threatened: give up every Capability card, or refuse.
 func _threat_modal() -> void:
@@ -1987,7 +2055,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Set up")
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: click a card in your hand and offer it to one other player, [b]face-up or face-down[/b] - your choice. If they agree, they take your card [i]now[/i]. The trade only completes on [i]their[/i] next turn, when they give you a card back - also face-up or face-down, their choice - and they are [b]not obliged[/b] to. Trading partners can deceive! If the offer is turned down you may try another player or draw instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: click a card in your hand and offer it to one other player. It goes [b]face-up[/b] in your [b]trade area[/b]. They answer by placing one of their cards face-up in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive! Every trade is in the open: all cards in trade areas are face-up. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside.")
 	_rules_h(vb, "Threats and disarming")
@@ -2157,7 +2225,7 @@ func _autotest() -> void:
 		cfg.bio = run[1]
 		cfg.players = run[2]
 		_start_game()
-		var acts := {"research": 0, "offer": 0, "trade_yes": 0, "trade_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0, "threat": 0, "threat_yes": 0, "threat_no": 0, "disarm": 0}
+		var acts := {"research": 0, "offer": 0, "trade_counter": 0, "trade_no": 0, "deal_yes": 0, "deal_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0, "threat": 0, "threat_yes": 0, "threat_no": 0, "disarm": 0}
 		var iter := 0
 		var shot_taken := false
 		while iter < 6000:
@@ -2178,12 +2246,22 @@ func _autotest() -> void:
 					acts.counter += 1
 					handled = true
 					break
-				if mb.kind == "trade_yes" or mb.kind == "trade_no":
-					var want := "trade_yes" if randf() < 0.55 else "trade_no"
+				if mb.kind == "trade_counter" or mb.kind == "trade_no":
+					var want := "trade_counter" if randf() < 0.55 else "trade_no"
 					for mb2 in modal_btns:
 						if mb2.kind == want:
 							mb2.button.pressed.emit()
 							acts[want] += 1
+							break
+					handled = true
+					break
+				if mb.kind == "deal_yes" or mb.kind == "deal_no":
+					var want2 := "deal_yes" if randf() < 0.6 else "deal_no"
+					for mb5 in modal_btns:
+						if mb5.kind == want2:
+							mb5.button.pressed.emit()
+							acts[want2] += 1
+							break
 					handled = true
 					break
 				if mb.kind == "threat_yes" or mb.kind == "threat_no":
@@ -2223,21 +2301,14 @@ func _autotest() -> void:
 			if G.turn_no > 120 and iter % 150 == 0:
 				_act_ceasefire()      # a long standoff: ask the table to stand down
 				continue
-			# honour a trade, or deceive
+			# deliver a pledged card, or break the deal
 			if btn.has("renege") and is_instance_valid(btn.renege):
 				if randf() < 0.4:
 					btn.renege.pressed.emit()
 					acts.renege += 1
 				else:
-					var hc0 := _first_hand_card()
-					if hc0 != null:
-						hc0.picked.emit(hc0.cid, hc0)
-						await get_tree().process_frame
-						await get_tree().process_frame
-						if _popup_press("FACE-"):
-							acts.honour += 1
-						else:
-							_close_popup()
+					btn.deliver.pressed.emit()
+					acts.honour += 1
 				continue
 			# voluntary disarmament, any time
 			if btn.has("disarm") and is_instance_valid(btn.disarm) and randf() < 0.03:
@@ -2280,7 +2351,7 @@ func _autotest() -> void:
 						hc.picked.emit(hc.cid, hc)
 						await get_tree().process_frame
 						await get_tree().process_frame
-						if _popup_press("FACE-"):
+						if _popup_press("OFFER"):
 							acts.offer += 1
 						else:
 							_close_popup()
@@ -2376,17 +2447,47 @@ func _shots() -> void:
 	await get_tree().create_timer(0.6).timeout
 	await _shot(d + "/5-attack.png")
 	_close_modal(true)
-	# a trade offer from an AI, and a debt to honour
-	await _stage("4", "off", ["uranium", "short"], false)
+	# an AI offers me a card (it sits face-up in its trade area) and I pick a card to offer back
+	await _stage("4", "off", ["uranium", "short", "warhead"], false)
 	G.turn = 1
-	var offered = G.players[1].hand[0]
-	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "face_up": true, "card_key": offered.key}
+	var offered = G.players[1].hand.pop_back()
+	offered.pub = true
+	G.players[1].trade.append(offered)
+	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "card_key": offered.key}
+	_render()
 	_trade_modal()
 	await get_tree().create_timer(0.5).timeout
 	await _shot(d + "/6-trade-offer.png")
 	_close_modal(true)
+	# I offered a card and an AI answered: accept the pair?
+	G.players[1].hand.append(G.players[1].trade.pop_back())
 	G.prompt = {}
-	G.debts = [{"from": 2, "to": 0, "got": 0}]
+	G.turn = 0
+	G.phase = "play"
+	var mx = ME.hand.pop_back()
+	mx.pub = true
+	ME.trade.append(mx)
+	var py = G.players[2].hand.pop_back()
+	py.pub = true
+	G.players[2].trade.append(py)
+	G.prompt = {"type": "deal", "player": ME, "partner": G.players[2], "x_id": mx.id, "y_id": py.id, "x_key": mx.key, "y_key": py.key}
+	_render()
+	_deal_modal()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/6b-deal.png")
+	_close_modal(true)
+	# a pledge waiting to be delivered
+	G.prompt = {}
+	G.players[2].hand.append(G.players[2].trade.pop_back())
+	ME.hand.append(ME.trade.pop_back())
+	var pledge = ME.hand.pop_back()
+	pledge.pub = true
+	ME.trade.append(pledge)
+	var pl2 = G.players[3].hand.pop_back()
+	pl2.pub = true
+	G.players[3].trade.append(G.players[3].hand.pop_back())
+	G.players[3].trade[0].pub = true
+	G.debts = [{"from": 3, "to": 0, "got": 0, "pledge": pledge.id}, {"from": 2, "to": 3, "got": 0, "pledge": G.players[3].trade[0].id}]
 	G.turn = 0
 	G.phase = "honour"
 	_render()

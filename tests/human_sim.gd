@@ -24,7 +24,10 @@ func _init() -> void:
 					if st == "prompt":
 						var pr := g.prompt
 						if str(pr.get("type", "")) == "trade":
-							g.answer_trade(g.rng.randf() < 0.5)
+							var hand: Array = pr.player.hand
+							g.answer_trade(hand[g.rng.randi() % hand.size()].id if g.rng.randf() < 0.5 and not hand.is_empty() else -1)
+						elif str(pr.get("type", "")) == "deal":
+							g.answer_deal(g.rng.randf() < 0.6)
 						elif str(pr.get("type", "")) == "threat":
 							g.answer_threat(g.rng.randf() < 0.5)
 						else:
@@ -49,13 +52,16 @@ func _human(g: NPGame, me: NPGame.Player) -> void:
 		if r < 0.4 or me.hand.is_empty():
 			g.renege(me)
 		else:
-			g.honour(me, me.hand[0].id, r > 0.7)
+			g.honour(me)
 	elif g.phase == "play":
 		if r < 0.3 and not me.hand.is_empty():
 			var o: Array = g.others(me)
-			g.trade_offer(me, me.hand[0].id, o[g.rng.randi() % o.size()].id, r > 0.15)
+			g.trade_offer(me, me.hand[0].id, o[g.rng.randi() % o.size()].id)
 			if g.phase == "play" and g.prompt.is_empty() and g.rng.randf() < 0.5:
-				g.play_research(me)
+				if not g.deck.is_empty():
+					g.play_research(me)
+				else:
+					g.play_skip(me)
 		elif not g.deck.is_empty():
 			g.play_research(me)
 		else:
