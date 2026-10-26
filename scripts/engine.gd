@@ -155,6 +155,12 @@ func _deal_outcome(by: Player, victim: Player, kept: bool) -> void:
 func warmth(viewer: Player, target: Player) -> float:
 	return maxf(0.0, trust_of(viewer, target) - TRUST_START)
 
+## A card arrives in a trade: the more `receiver` needed it, the warmer it feels towards `giver`.
+## A card it really wanted (a missing Technology or Capability) builds goodwill; a useless duplicate
+## counts slightly against. Only the two partners know what changed hands (trades are face down).
+func _favour(receiver: Player, giver: Player, c: Dictionary) -> void:
+	_shift_trust(receiver, giver, 0.16 * (_gain(receiver, c) - 0.4))
+
 ## 0 = no grievance; up to ~0.6 for someone who has betrayed this player repeatedly.
 func grudge(viewer: Player, target: Player) -> float:
 	return maxf(0.0, TRUST_START - trust_of(viewer, target))
@@ -547,6 +553,7 @@ func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
 			p.trade.pop_at(i)
 			break
 	x.pub = false
+	_favour(t, p, x)
 	t.hand.append(x)
 	debts.append({"from": p.id, "to": t.id, "got": x.id, "pledge": y.id})
 	_shift_trust(t, p, 0.05)      # they handed their card over first
@@ -608,6 +615,7 @@ func honour(p: Player) -> bool:
 	if y != null:
 		p.trade.erase(y)
 		y.pub = false
+		_favour(to, p, y)
 		to.hand.append(y)
 		log_msg("%s DELIVERS the pledged card to %s - the trade is complete." % [p.name, to.name])
 		event.emit("give", {"from": p, "to": to, "c": y})
