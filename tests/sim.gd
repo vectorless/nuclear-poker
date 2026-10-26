@@ -14,9 +14,9 @@ func _init() -> void:
 	var only := OS.get_cmdline_user_args()
 	if not only.is_empty():
 		modes = Array(only).filter(func(m): return m in ["classic", "slow", "fog", "fast"])
-	var counts := [3, 4]
+	var counts := [3, 4, 5]
 	var bios := ["off", "2000", "2035"]
-	var sets := [["hawk", "dove", "opp", "wild"], ["hawk", "hawk", "wild", "dove"], ["dove", "dove", "opp", "hawk"], ["wild", "opp", "dove", "wild"]]
+	var sets := [["hawk", "dove", "opp", "wild", "opp"], ["hawk", "hawk", "wild", "dove", "dove"], ["dove", "dove", "opp", "hawk", "wild"], ["wild", "opp", "dove", "wild", "hawk"]]
 	var fails := 0
 	for mode in modes:
 		for np in counts:

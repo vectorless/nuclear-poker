@@ -4,7 +4,7 @@ extends SceneTree
 
 func _init() -> void:
 	var fails := 0
-	for np in [3, 4]:
+	for np in [3, 4, 5]:
 		for bio in ["off", "2035"]:
 			for seed_i in range(1, 61):
 				var plist: Array = [{"name": "Me", "human": true}]

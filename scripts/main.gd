@@ -33,7 +33,7 @@ var HEAD: Font
 var MONO: Font
 var TEX := {}
 
-var cfg := {"name": "You", "mode": "classic", "bio": "off", "players": "3", "p1": "random", "p2": "random", "p3": "random", "fullscreen": false}
+var cfg := {"name": "You", "mode": "classic", "bio": "off", "players": "3", "p1": "random", "p2": "random", "p3": "random", "p4": "random", "fullscreen": false}
 var G: NPGame = null
 var ME: NPGame.Player = null
 
@@ -72,6 +72,8 @@ var modal_vbox: VBoxContainer = null
 var modal_pause := false
 var modal_sticky := false
 var popup: Control = null
+var me_zone: Control = null
+var board_scroll: ScrollContainer = null
 var name_edit: LineEdit
 var opp_btns: Array = []
 var opp_lbls: Array = []
@@ -474,7 +476,7 @@ func _load_cfg() -> void:
 		muted = bool(cf.get_value("s", "muted", false))
 	cfg.mode = "classic"          # the other WAR modes are locked for now
 	cfg.bio = "off"              # Biowar expansions are locked for now
-	cfg.players = "4" if str(cfg.players) == "4" else "3"
+	cfg.players = str(cfg.players) if str(cfg.players) in ["3", "4", "5"] else "3"
 
 func _save_cfg() -> void:
 	var cf := ConfigFile.new()
@@ -603,11 +605,12 @@ func _build_menu() -> Control:
 	players_opt.focus_mode = Control.FOCUS_NONE
 	players_opt.add_item("3 players - you and two AI powers")
 	players_opt.add_item("4 players - you and three AI powers")
+	players_opt.add_item("5 players - you and four AI powers")
 	for st0 in ["normal", "hover", "pressed"]:
 		players_opt.add_theme_stylebox_override(st0, _sb(C_PANEL2, C_LINE, 1, 8, 9))
-	players_opt.select(1 if str(cfg.players) == "4" else 0)
+	players_opt.select(int(cfg.players) - 3)
 	players_opt.item_selected.connect(func(i):
-		cfg.players = "4" if i == 1 else "3"
+		cfg.players = str(i + 3)
 		_refresh_opts())
 	b3.add_child(players_opt)
 	b3.add_child(_lbl("YOUR CALLSIGN", 12, C_MUT, MONO))
@@ -619,7 +622,7 @@ func _build_menu() -> Control:
 	b3.add_child(name_edit)
 	opp_btns.clear()
 	opp_lbls.clear()
-	for i in range(3):
+	for i in range(4):
 		var ol := _lbl("OPPONENT %d" % (i + 1), 12, C_MUT, MONO)
 		b3.add_child(ol)
 		opp_lbls.append(ol)
@@ -705,17 +708,18 @@ func _refresh_opts() -> void:
 		o.panel.add_theme_stylebox_override("panel", s)
 		o.dot.on = sel
 		o.dot.queue_redraw()
-	var four := str(cfg.players) == "4"
-	if opp_btns.size() > 2:
-		opp_btns[2].visible = four
-		opp_lbls[2].visible = four
+	var n_ai := int(cfg.players) - 1
+	for i in range(opp_btns.size()):
+		opp_btns[i].visible = i < n_ai
+		opp_lbls[i].visible = i < n_ai
 
 func _on_begin() -> void:
 	cfg.name = name_edit.text.strip_edges().left(18) if name_edit.text.strip_edges() != "" else "You"
 	cfg.p1 = PERSONA_IDS[opp_btns[0].selected]
 	cfg.p2 = PERSONA_IDS[opp_btns[1].selected]
 	cfg.p3 = PERSONA_IDS[opp_btns[2].selected]
-	cfg.players = "4" if players_opt.selected == 1 else "3"
+	cfg.p4 = PERSONA_IDS[opp_btns[3].selected]
+	cfg.players = str(players_opt.selected + 3)
 	_save_cfg()
 	_start_game()
 
@@ -743,6 +747,7 @@ func _build_shell() -> Control:
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	main.add_child(sc)
+	board_scroll = sc
 	var mg := MarginContainer.new()
 	mg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for side in ["left", "right", "top", "bottom"]:
@@ -783,7 +788,7 @@ func _build_shell() -> Control:
 # ====================================================================== start / events
 func _start_game() -> void:
 	var ids := ["hawk", "dove", "opp", "wild"]
-	var n_ai := 3 if str(cfg.players) == "4" else 2
+	var n_ai := clampi(int(cfg.players) - 1, 2, 4)
 	var picks: Array = []
 	for i in range(n_ai):
 		picks.append(str(cfg["p%d" % (i + 1)]))
@@ -859,10 +864,8 @@ func _pump() -> void:
 		_finish()
 		return
 	if st == "prompt":
-		if str(G.prompt.get("type", "")) == "trade":
-			_trade_modal()
-		elif str(G.prompt.get("type", "")) == "deal":
-			_deal_modal()
+		if str(G.prompt.get("type", "")) == "trade" or str(G.prompt.get("type", "")) == "deal":
+			pass      # answered in place: in the trade areas on the board
 		elif str(G.prompt.get("type", "")) == "threat":
 			_threat_modal()
 		else:
@@ -969,8 +972,8 @@ func _on_resize() -> void:
 func _render() -> void:
 	if G == null:
 		return
+	_render_board()      # first: it resets the button registry
 	_render_top()
-	_render_board()
 	_render_side()
 
 func _render_top() -> void:
@@ -987,6 +990,12 @@ func _render_top() -> void:
 	topbar.add_child(_chip("Round %d" % G.round_no))
 	topbar.add_child(_chip("Deck %d" % G.deck.size()))
 	topbar.add_child(_spacer())
+	if G.mode == "classic" and ME.alive and not G.over and not G.caps_held(ME).is_empty():
+		var db := _btn("Disarm", "default", 13)
+		db.tooltip_text = "Return all your Capability cards to the deck - allowed at any time."
+		db.pressed.connect(_disarm_modal)
+		topbar.add_child(db)
+		btn["disarm"] = db
 	var cf := _btn("Propose stand-down", "default", 13)
 	cf.disabled = G.over or not ME.alive
 	cf.pressed.connect(_act_ceasefire)
@@ -1011,8 +1020,8 @@ func _render_board() -> void:
 	_clear(board)
 	btn.clear()
 	var vw := get_viewport_rect().size.x
-	card_w = clampf(vw * 0.085, 84.0, 128.0)
-	mini_w = clampf(vw * 0.036, 38.0, 56.0)
+	card_w = clampf(vw * 0.07, 76.0, 112.0)
+	mini_w = clampf(vw * (0.036 if G.players.size() < 5 else 0.027), 32.0, 56.0)
 	var opps := HBoxContainer.new()
 	opps.add_theme_constant_override("separation", 12)
 	for i in range(1, G.players.size()):
@@ -1037,13 +1046,31 @@ func _zone(label: String, items: Array, empty_text: String) -> VBoxContainer:
 	return vb
 
 ## The face-up trade area of a seat: an offer waiting for an answer, or a card pledged to a partner.
+func _answering() -> bool:
+	return G != null and str(G.prompt.get("type", "")) == "trade" and G.prompt.player == ME
+
+func _answer_trade(cid: int) -> void:
+	if _answering():
+		G.answer_trade(cid)
+		_after_human()
+
 func _trade_zone(p: NPGame.Player, w: float) -> Control:
-	var pc := PanelContainer.new()
+	var pc := DropTarget.new()
+	pc.accept = func(_d): return p == ME and _answering()
+	pc.on_drop = func(d): _answer_trade(int(d.cid))
+	if p == ME:
+		me_zone = pc
 	pc.add_theme_stylebox_override("panel", _sb(Color("#0f1a24"), Color("#2f5f8f"), 1, 8, 6))
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 3)
 	pc.add_child(vb)
-	vb.add_child(_lbl("TRADE AREA", 11, Color("#9fd2ff"), MONO))
+	var pr := G.prompt
+	var mine: bool = p == ME and not pr.is_empty() and pr.player == ME
+	var hdr := HBoxContainer.new()
+	hdr.add_theme_constant_override("separation", 10)
+	hdr.add_child(_lbl("TRADE AREA", 11, Color("#9fd2ff"), MONO))
+	hdr.add_child(_spacer())
+	vb.add_child(hdr)
 	var fl := HFlowContainer.new()
 	fl.add_theme_constant_override("h_separation", 6)
 	fl.custom_minimum_size.y = w * 430.0 / 330.0 + 2
@@ -1059,8 +1086,42 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 		cp.add_child(tx)
 		fl.add_child(cp)
 	if p.trade.is_empty():
-		fl.add_child(_lbl("no offer", 12, C_MUT, MONO))
+		fl.add_child(_lbl("drag a card here to answer" if mine else "no offer", 12, C_MUT, MONO))
 	vb.add_child(fl)
+	if not pr.is_empty() and str(pr.get("type", "")) == "trade" and pr.from == p:
+		vb.add_child(_lbl("Offered to %s" % ("you" if pr.player == ME else pr.player.name), 12, C_AMBER, MONO))
+	if mine and str(pr.get("type", "")) == "trade":
+		var no := _btn("Decline the offer", "default", 13)
+		no.pressed.connect(_answer_trade.bind(-1))
+		hdr.add_child(no)
+		btn["trade_no"] = no
+		vb.add_child(_lbl("Drag a card of yours in here to answer %s's offer." % [pr.from.name], 12, C_INK, null, true))
+		var hook := Button.new()      # test hook: lets the UI bot answer without a real drag
+		hook.visible = false
+		hook.pressed.connect(func():
+			for c in ME.hand:
+				_answer_trade(c.id)
+				return
+			_answer_trade(-1))
+		vb.add_child(hook)
+		btn["trade_counter"] = hook
+	elif mine and str(pr.get("type", "")) == "deal":
+		var y := _btn("Accept the deal", "primary", 13)
+		y.pressed.connect(func():
+			G.answer_deal(true)
+			_after_human())
+		var n := _btn("Decline", "default", 13)
+		n.pressed.connect(func():
+			G.answer_deal(false)
+			_after_human())
+		hdr.add_child(y)
+		hdr.add_child(n)
+		btn["deal_yes"] = y
+		btn["deal_no"] = n
+		vb.add_child(_lbl("%s answers with %s. Theirs reaches you on their next turn; they may break the deal." % [pr.partner.name, NPGame.INFO[pr.y_key].name], 12, C_INK, null, true))
+	elif not pr.is_empty() and str(pr.get("type", "")) == "deal" and pr.partner == p:
+		vb.add_child(_lbl("Their answer to your offer", 12, C_AMBER, MONO))
+	_pass_through(pc)
 	return pc
 
 func _mini_pub(key: String) -> Control:
@@ -1151,7 +1212,14 @@ func _banner() -> Control:
 		tone = "dead"
 	elif G.mode == "classic":
 		var wa := _war_peek()
-		if G.phase == "honour":
+		var pt := str(G.prompt.get("type", ""))
+		if pt == "trade" and G.prompt.player == ME:
+			text = "[b][color=#f2b134]%s offers you a trade.[/color][/b] Drag one of your cards into your trade area to answer - or decline." % G.prompt.from.name
+			tone = "you"
+		elif pt == "deal" and G.prompt.player == ME:
+			text = "[b][color=#f2b134]%s has answered.[/color][/b] Accept the deal or decline it, in your trade area." % G.prompt.partner.name
+			tone = "you"
+		elif G.phase == "honour":
 			if G.cur() == ME and not G._debts_of(ME).is_empty():
 				text = "[b][color=#f2b134]A trade is due.[/color][/b] You pledged a card to %s. Deliver it - or break the deal." % G.players[G._debts_of(ME)[0].from].name
 				tone = "you"
@@ -1311,14 +1379,25 @@ func _me_panel() -> Control:
 	hd.add_child(_spacer())
 	hd.add_child(_lbl("%d in hand" % ME.hand.size(), 12, C_MUT, MONO))
 	vb.add_child(hd)
+	# cards on the left, the trade area beside them (saves vertical space)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.add_theme_constant_override("separation", 6)
+	row.add_child(left)
 	if G.mode == "classic":
-		vb.add_child(_trade_zone(ME, mini_w * 1.35))
+		var tz := _trade_zone(ME, mini_w * 1.35)
+		tz.custom_minimum_size.x = 250
+		tz.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		row.add_child(tz)
+	vb.add_child(row)
 	if not ME.table.is_empty():
 		var tr := HBoxContainer.new()
 		tr.add_theme_constant_override("separation", 8)
 		for c in ME.table:
 			tr.add_child(_tex(c.key, mini_w * 1.35))
-		vb.add_child(tr)
+		left.add_child(tr)
 	var hv := HandView.new()
 	hv.cw = card_w
 	hv.ch = card_w * 430.0 / 330.0
@@ -1344,11 +1423,11 @@ func _me_panel() -> Control:
 			mk.position = Vector2(4, hv.ch - 24)
 			mk.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			hc.add_child(mk)
-		hc.can_drag = G.mode == "classic" and _can_offer()
+		hc.can_drag = G.mode == "classic" and (_can_offer() or _answering())
 		hc.preview = _drag_preview.bind(c.key)
 		hc.picked.connect(_card_menu)
 		hv.add_child(hc)
-	vb.add_child(hv)
+	left.add_child(hv)
 	hv.layout.call_deferred()
 	fresh.clear()
 	vb.add_child(_action_bar())
@@ -1440,6 +1519,9 @@ func _action_bar() -> Control:
 
 func _classic_actions(bar: HFlowContainer) -> void:
 	var L := G.legal(ME)
+	if str(G.prompt.get("type", "")) == "trade" or str(G.prompt.get("type", "")) == "deal":
+		bar.add_child(_lbl("Answer the trade in your trade area above.", 13, C_MUT))
+		return
 	if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
 		var dd: Dictionary = G._debts_of(ME)[0]
 		var cr: NPGame.Player = G.players[dd.from]
@@ -1496,12 +1578,6 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		bar.add_child(_lbl("choose one", 13, C_MUT))
 	else:
 		bar.add_child(_lbl("Waiting for the table...", 13, C_MUT))
-	if not G.caps_held(ME).is_empty():
-		var db := _btn("Disarm", "default", 13)
-		db.tooltip_text = "Return all your Capability cards to the deck - allowed at any time."
-		db.pressed.connect(_disarm_modal)
-		bar.add_child(db)
-		btn["disarm"] = db
 
 func _render_side() -> void:
 	_clear(map_box)
@@ -1863,107 +1939,6 @@ func _fog_modal() -> void:
 		modal_btns.append({"kind": "fog_test", "button": tb})
 	_attack_list(vb, L, "fog")
 
-func _trade_modal() -> void:
-	var pr := G.prompt
-	if pr.is_empty() or not pr.player.human or modal != null:
-		return
-	var vb := _open_modal("Trade offer", false, true, false)
-	vb.add_child(_rtl("[b]%s[/b] offers you a [b]%s[/b] in their trade area.\n\nAnswer by dragging one of your cards into your trade area, and they decide. If they accept, their card is yours at once - but yours waits in your trade area and only reaches them on [b]your next turn[/b], when you can still break the deal. Or decline." % [pr.from.name, NPGame.INFO[pr.card_key].name], 15, Color("#c3ccd6")))
-	var cr := HBoxContainer.new()
-	cr.alignment = BoxContainer.ALIGNMENT_CENTER
-	cr.add_child(_tex(str(pr.card_key), 84))
-	vb.add_child(cr)
-	vb.add_child(_lbl("YOUR CARDS - drag one into your trade area to answer", 12, C_MUT, MONO))
-	var fl := HFlowContainer.new()
-	fl.add_theme_constant_override("h_separation", 10)
-	fl.add_theme_constant_override("v_separation", 8)
-	var seen := {}
-	var first_id := -1
-	var hand: Array = ME.hand.duplicate()
-	hand.sort_custom(func(a, b): return ORDER.find(a.key) < ORDER.find(b.key))
-	for c in hand:
-		if seen.has(c.key):
-			continue
-		seen[c.key] = true
-		var src := DragSrc.new()
-		src.cid = c.id
-		src.custom_minimum_size = Vector2(66, 66.0 * 430.0 / 330.0)
-		src.preview = _drag_preview.bind(c.key)
-		var tx := _tex(c.key, 66)
-		tx.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		tx.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		src.add_child(tx)
-		fl.add_child(src)
-		if first_id < 0:
-			first_id = c.id
-	vb.add_child(fl)
-	var zone := DropTarget.new()
-	zone.add_theme_stylebox_override("panel", _sb(Color("#0f1a24"), Color("#2f5f8f"), 2, 8, 10))
-	zone.custom_minimum_size = Vector2(0, 52)
-	zone.accept = func(_d): return true
-	zone.on_drop = func(d):
-		_close_modal(true)
-		G.answer_trade(int(d.cid))
-		_after_human()
-	var zl := _lbl("YOUR TRADE AREA - drop a card here", 14, Color("#9fd2ff"), MONO)
-	zl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	zl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	zl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	zone.add_child(zl)
-	vb.add_child(zone)
-	# test hook: lets the UI bot answer without a real drag
-	var hook := Button.new()
-	hook.visible = false
-	hook.pressed.connect(func():
-		_close_modal(true)
-		G.answer_trade(first_id)
-		_after_human())
-	vb.add_child(hook)
-	modal_btns.append({"kind": "trade_counter", "button": hook})
-	var n := _btn("Decline")
-	n.pressed.connect(func():
-		_close_modal(true)
-		G.answer_trade(-1)
-		_after_human())
-	vb.add_child(n)
-	modal_btns.append({"kind": "trade_no", "button": n})
-
-## You offered a card and they answered with one of theirs: accept the pair or not.
-func _deal_modal() -> void:
-	var pr := G.prompt
-	if pr.is_empty() or not pr.player.human or modal != null:
-		return
-	var vb := _open_modal("Their answer", false, true, false)
-	vb.add_child(_rtl("[b]%s[/b] answers your offer. Both cards are in the open.\n\nIf you accept, your card goes to them [b]now[/b], but theirs only reaches you on [b]their next turn[/b] - and they may break the deal. Decline, and you can offer again or draw instead." % pr.partner.name, 15, Color("#c3ccd6")))
-	var row := HBoxContainer.new()
-	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 28)
-	for side in [["YOU GIVE", pr.x_key, "now"], [pr.partner.name.to_upper() + " PLEDGES", pr.y_key, "on their next turn"]]:
-		var col := VBoxContainer.new()
-		col.add_theme_constant_override("separation", 4)
-		col.add_child(_lbl(side[0], 13, C_AMBER, HEAD))
-		col.add_child(_tex(str(side[1]), 120))
-		col.add_child(_lbl(NPGame.INFO[side[1]].name + " - " + side[2], 12, C_MUT, MONO))
-		row.add_child(col)
-	vb.add_child(row)
-	var brow := HBoxContainer.new()
-	brow.add_theme_constant_override("separation", 10)
-	var y := _btn("Accept the deal", "primary")
-	y.pressed.connect(func():
-		_close_modal(true)
-		G.answer_deal(true)
-		_after_human())
-	var n := _btn("Decline")
-	n.pressed.connect(func():
-		_close_modal(true)
-		G.answer_deal(false)
-		_after_human())
-	brow.add_child(y)
-	brow.add_child(n)
-	vb.add_child(brow)
-	modal_btns.append({"kind": "deal_yes", "button": y})
-	modal_btns.append({"kind": "deal_no", "button": n})
-
 ## You are being threatened: give up every Capability card, or refuse.
 func _threat_modal() -> void:
 	var pr := G.prompt
@@ -2142,7 +2117,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 		"Counter-strike (Second Strike): retaliate once after you are hit (needs Short + Long)",
 		"Superpower: all four Capabilities + a test"])
 	_rules_h(vb, "Set up")
-	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
+	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40, 5 players = 48[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
 	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive! Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
@@ -2304,7 +2279,7 @@ func _autotest() -> void:
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	await get_tree().process_frame
 	await _shot(out_dir + "/menu.png")
-	var runs := [["classic", "off", "3"], ["classic", "off", "4"], ["classic", "2035", "3"], ["classic", "2000", "4"], ["classic", "off", "4"]]
+	var runs := [["classic", "off", "3"], ["classic", "off", "4"], ["classic", "2035", "3"], ["classic", "2000", "4"], ["classic", "off", "5"]]
 	var bad := 0
 	for ua in OS.get_cmdline_user_args():
 		if ua.begins_with("--run="):
@@ -2386,6 +2361,17 @@ func _autotest() -> void:
 			if popup != null:
 				_close_popup()
 			if not ME.alive or G.over:
+				continue
+			var ptype := str(G.prompt.get("type", ""))
+			if (ptype == "trade" or ptype == "deal") and G.prompt.player == ME:
+				if ptype == "trade" and btn.has("trade_no"):
+					var tk := "trade_counter" if randf() < 0.55 else "trade_no"
+					btn[tk].pressed.emit()
+					acts[tk] += 1
+				elif ptype == "deal" and btn.has("deal_yes"):
+					var dk := "deal_yes" if randf() < 0.6 else "deal_no"
+					btn[dk].pressed.emit()
+					acts[dk] += 1
 				continue
 			if G.turn_no > 120 and iter % 150 == 0:
 				_act_ceasefire()      # a long standoff: ask the table to stand down
@@ -2479,6 +2465,7 @@ func _stage(np: String, bio: String, mine: Array, tested: bool) -> void:
 	cfg.p1 = "hawk"
 	cfg.p2 = "dove"
 	cfg.p3 = "wild"
+	cfg.p4 = "opp"
 	_start_game()
 	speed = 1.0
 	pump_token += 1
@@ -2578,22 +2565,21 @@ func _dragtest() -> void:
 	G.players[1].trade.append(offered)
 	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "card_key": offered.key}
 	_render()
-	_trade_modal()
 	await get_tree().create_timer(0.5).timeout
-	var src: Control = null
-	var zone: Control = null
-	for n in modal.find_children("*", "Control", true, false):
-		if n is DragSrc and src == null:
-			src = n
-		if n is DropTarget:
-			zone = n
-	await _drag(src.get_global_rect().get_center(), zone.get_global_rect().get_center())
-	print("DRAGTEST answer: prompt=", G.prompt.get("type", "-"), " modal=", modal != null)
+	board_scroll.scroll_vertical = 0
+	await get_tree().create_timer(0.3).timeout
+	var src := _first_hand_card()
+	var sr := src.get_global_rect()
+	await _drag(Vector2(sr.position.x + sr.size.x / 2.0, minf(sr.position.y + 30.0, 705.0)), me_zone.get_global_rect().get_center())
+	print("DRAGTEST answer: prompt=", G.prompt.get("type", "-"), " deal=", G.prompt.get("type", "-") == "deal")
 	if G.prompt.get("type", "-") == "trade":
 		fails += 1
 		print("DRAGTEST FAIL: modal drop did nothing")
 	print("DRAGTEST DONE fails=", fails)
 	get_tree().quit(fails)
+
+var scroll_to_me := func():
+	board_scroll.scroll_vertical = 0
 
 func _shots() -> void:
 	var d := "/tmp/gshots2"
@@ -2602,6 +2588,9 @@ func _shots() -> void:
 	await _shot(d + "/0-menu.png")
 	await _stage("4", "off", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
 	await _shot(d + "/1-board4.png")
+	await _stage("5", "off", ["uranium", "refinement", "short", "long"], false)
+	await _shot(d + "/1c-board5.png")
+	await _stage("4", "off", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
 	var hc := _first_hand_card()
 	if hc != null:
 		_card_menu(hc.cid, hc)
@@ -2628,10 +2617,10 @@ func _shots() -> void:
 	G.players[1].trade.append(offered)
 	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "card_key": offered.key}
 	_render()
-	_trade_modal()
 	await get_tree().create_timer(0.5).timeout
+	scroll_to_me.call()
+	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/6-trade-offer.png")
-	_close_modal(true)
 	# I offered a card and an AI answered: accept the pair?
 	G.players[1].hand.append(G.players[1].trade.pop_back())
 	G.prompt = {}
@@ -2645,10 +2634,10 @@ func _shots() -> void:
 	G.players[2].trade.append(py)
 	G.prompt = {"type": "deal", "player": ME, "partner": G.players[2], "x_id": mx.id, "y_id": py.id, "x_key": mx.key, "y_key": py.key}
 	_render()
-	_deal_modal()
 	await get_tree().create_timer(0.5).timeout
+	scroll_to_me.call()
+	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/6b-deal.png")
-	_close_modal(true)
 	# a pledge waiting to be delivered
 	G.prompt = {}
 	G.players[2].hand.append(G.players[2].trade.pop_back())
