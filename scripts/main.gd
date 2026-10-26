@@ -1522,7 +1522,6 @@ func _me_panel() -> Control:
 			elif d.from == ME.id:
 				hd.add_child(_badge("%s OWES YOU A CARD" % G.players[d.to].name.to_upper(), Color("#ddcc98"), Color("#2a2716"), Color("#6e6743")))
 	hd.add_child(_spacer())
-	hd.add_child(_lbl("%d in hand" % ME.hand.size(), 12, C_MUT, MONO))
 	vb.add_child(hd)
 	# cards on the left, the trade area beside them (saves vertical space)
 	var row := HBoxContainer.new()
