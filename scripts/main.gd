@@ -518,6 +518,31 @@ func _spacer() -> Control:
 	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return s
 
+## An AI's dossier photograph (assets/portraits/<persona>.png from tools/meshy_portraits.py),
+## in a photo-paper frame; a stamped initial until the portrait exists.
+func _portrait(p: NPGame.Player, s: float) -> Control:
+	var frame := PanelContainer.new()
+	frame.custom_minimum_size = Vector2(s, s)
+	frame.add_theme_stylebox_override("panel", _sb(Color("#e4d6b0"), _persona_color(p), 2, 3, 2))
+	var path := "res://assets/portraits/%s.png" % str(p.persona.get("id", ""))
+	if not p.human and ResourceLoader.exists(path):
+		var t := TextureRect.new()
+		t.texture = load(path)
+		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		t.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if not p.alive:
+			t.modulate = Color(0.6, 0.55, 0.5)
+		frame.add_child(t)
+	else:
+		var l := _lbl(p.name.split(" ")[-1].left(1), int(s * 0.55), Color("#2b241a"), HEAD)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		frame.add_child(l)
+	frame.tooltip_text = p.name
+	return frame
+
 func _persona_color(p: NPGame.Player) -> Color:
 	return Color(p.persona.color) if not p.persona.is_empty() else C_GREEN
 
@@ -1344,12 +1369,8 @@ func _seat(p: NPGame.Player) -> Control:
 	var hd := HFlowContainer.new()
 	hd.add_theme_constant_override("h_separation", 8)
 	hd.add_theme_constant_override("v_separation", 3)
-	hd.add_child(_lbl(p.name.to_upper(), 20, C_INK, HEAD))
-	if ME.alive and p.alive and p != ME:
-		if G.neighbors_of(ME).has(p):
-			hd.add_child(_badge("SHORT RANGE", Color("#e9c977"), Color("#33290f"), Color("#7a5d18")))
-		else:
-			hd.add_child(_badge("LONG RANGE ONLY", C_MUT, C_PANEL2, C_LINE))
+	var five := G.players.size() >= 5
+	hd.add_child(_lbl(p.name.to_upper(), 15 if five else 20, C_INK, HEAD))
 	if p.alive:
 		for d in G.debts:
 			if d.to == p.id:
@@ -1359,12 +1380,17 @@ func _seat(p: NPGame.Player) -> Control:
 	if not p.alive:
 		hd.add_child(_badge(("killed by " + G.players[p.eliminated_by].name) if p.eliminated_by >= 0 else "eliminated", C_MUT, C_PANEL2, C_LINE))
 	# Fixed-height header (name + badges), clipped, so every seat's cards line up and never move.
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.add_child(_portrait(p, 52.0 if G.players.size() < 5 else 46.0))
 	var hold := Control.new()
 	hold.clip_contents = true
-	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 62
+	hold.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 46
 	hd.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hold.add_child(hd)
-	vb.add_child(hold)
+	row.add_child(hold)
+	vb.add_child(row)
 	var hand_items: Array = []
 	var unk := 0
 	for c in p.hand:
