@@ -77,6 +77,7 @@ var opp_lbls: Array = []
 var players_opt: OptionButton
 var sounds := {}
 var ambience: AudioStreamPlayer = null
+var drag_ghost: Control = null      # the picture that follows the pointer while dragging
 var zoom: TextureRect = null      # enlarged copy of the card under the pointer
 var debug_panel: Control = null      # F9: what the AI players know and think
 var music: Array = []             # one player per tension level, all running in sync
@@ -188,7 +189,7 @@ class DropTarget extends PanelContainer:
 		return ok
 	func _drop_data(_at: Vector2, data: Variant) -> void:
 		_set_hot(false)
-		on_drop.call(data)
+		on_drop.call_deferred(data)      # let the drag finish (and its preview go) before the board is rebuilt
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_DRAG_END or what == NOTIFICATION_MOUSE_EXIT:
 			_set_hot(false)
@@ -1076,6 +1077,7 @@ func _on_resize() -> void:
 func _render() -> void:
 	if G == null:
 		return
+	_zoom_hide()
 	_render_board()      # first: it resets the button registry
 	_render_top()
 	_render_side()
@@ -1827,7 +1829,27 @@ func _drag_preview(key: String) -> Control:
 	t.position = Vector2(-46, -60)
 	var holder := Control.new()
 	holder.add_child(t)
+	drag_ghost = holder
 	return holder
+
+## Belt and braces: whatever happens to the drag, no picture of the card is left behind.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_DRAG_BEGIN:
+		_zoom_hide()
+	elif what == NOTIFICATION_DRAG_END:
+		_zoom_hide()
+		if drag_ghost != null and is_instance_valid(drag_ghost):
+			drag_ghost.queue_free()
+		drag_ghost = null
+		_reset_hand_hover.call_deferred()
+
+## Put every hand card back to its resting size and place.
+func _reset_hand_hover() -> void:
+	if board == null:
+		return
+	for n in board.find_children("*", "", true, false):
+		if n is HandCard:
+			n._hover(false)
 
 ## Letting go of a dragged card on a player's seat offers it to them.
 func _drop_offer(p: NPGame.Player, data: Dictionary) -> void:
@@ -2676,6 +2698,15 @@ func _dragtest() -> void:
 	var hr := hc.get_global_rect()
 	await _drag(Vector2(hr.position.x + hr.size.x / 2.0, minf(hr.position.y + 30.0, 705.0)), seat1.get_global_rect().get_center())
 	await _shot("/tmp/gshots2/drag-after.png")
+	var strays := 0
+	for root in [fx_root, popup_root]:
+		for n in root.find_children("*", "TextureRect", true, false):
+			strays += 1
+	var ghost_left: bool = drag_ghost != null and is_instance_valid(drag_ghost) and drag_ghost.is_inside_tree()
+	print("DRAGTEST leftovers: overlay textures=", strays, " ghost=", ghost_left, " dragging=", get_viewport().gui_is_dragging())
+	if strays > 0 or ghost_left or get_viewport().gui_is_dragging():
+		fails += 1
+		print("DRAGTEST FAIL: something was left behind after the drop")
 	if drag_lit != 1:
 		fails += 1
 		print("DRAGTEST FAIL: %d targets lit while hovering one trade space" % drag_lit)
