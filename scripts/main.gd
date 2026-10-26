@@ -126,13 +126,33 @@ class HandCard extends Control:
 	var can_drag := false
 	var face: Control = null      # the visual; scaled on hover while the card's hit area stays put
 	var preview: Callable
+	var tex: Texture2D            # the card picture, for the copy that follows the pointer
 	var tw: Tween
-	func _get_drag_data(_at: Vector2) -> Variant:
+	var dragging := false
+	func _get_drag_data(at: Vector2) -> Variant:
 		if not can_drag:
 			return null
-		if preview.is_valid():
-			set_drag_preview(preview.call())
+		# the card itself leaves the hand and travels with the pointer, held where it was grabbed
+		var holder := Control.new()
+		var t := TextureRect.new()
+		t.texture = tex
+		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		t.stretch_mode = TextureRect.STRETCH_SCALE
+		t.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		t.size = size
+		t.position = -at
+		t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		holder.add_child(t)
+		set_drag_preview(holder)
+		dragging = true
+		modulate.a = 0.0
 		return {"cid": cid}
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_DRAG_END and dragging:
+			dragging = false
+			# dropped somewhere that took it: stay gone (the board is about to update); otherwise come back
+			if not get_viewport().gui_is_drag_successful():
+				modulate.a = 1.0
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -1587,6 +1607,7 @@ func _me_panel() -> Control:
 			face.add_child(mk)
 		hc.can_drag = _can_offer() or _answering()
 		hc.preview = _drag_preview.bind(c.key)
+		hc.tex = TEX[c.key]
 		hc.picked.connect(_card_menu)
 		hv.add_child(hc)
 	left.add_child(hv)
@@ -2628,6 +2649,7 @@ func _mouse(pos: Vector2, pressed := false, button := false, motion := false, he
 		mb.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
 		Input.parse_input_event(mb)
 
+var drag_src_hidden := false
 var drag_lit := -1      # drag test: how many drop targets were lit just before release
 
 func _drag(from: Vector2, to: Vector2) -> void:
@@ -2640,6 +2662,10 @@ func _drag(from: Vector2, to: Vector2) -> void:
 		await get_tree().process_frame
 	await get_tree().create_timer(0.15).timeout
 	drag_lit = 0
+	drag_src_hidden = false
+	for n in get_tree().root.find_children("*", "", true, false):
+		if n is HandCard and n.dragging and n.modulate.a == 0.0:
+			drag_src_hidden = true
 	for n in get_tree().root.find_children("*", "", true, false):
 		if n is DropTarget and n.hot:
 			drag_lit += 1
@@ -2674,6 +2700,9 @@ func _dragtest() -> void:
 	if strays > 0 or ghost_left or get_viewport().gui_is_dragging():
 		fails += 1
 		print("DRAGTEST FAIL: something was left behind after the drop")
+	if not drag_src_hidden:
+		fails += 1
+		print("DRAGTEST FAIL: the card stayed in the hand while being dragged")
 	if drag_lit != 1:
 		fails += 1
 		print("DRAGTEST FAIL: %d targets lit while hovering one trade space" % drag_lit)
@@ -2699,6 +2728,27 @@ func _dragtest() -> void:
 	if G.prompt.get("type", "-") == "trade":
 		fails += 1
 		print("DRAGTEST FAIL: modal drop did nothing")
+	# a drag that is let go over nothing puts the card back in the hand
+	await _stage("4", ["uranium", "short", "warhead"], false)
+	G.turn = 0
+	G.phase = "play"
+	_render()
+	await get_tree().create_timer(0.4).timeout
+	board_scroll.scroll_vertical = 10000
+	await get_tree().create_timer(0.2).timeout
+	var hc3 := _first_hand_card()
+	var n_before := ME.hand.size()
+	var r3 := hc3.get_global_rect()
+	await _drag(Vector2(r3.position.x + 20, minf(r3.position.y + 30, 705)), Vector2(1100, 600))
+	await get_tree().create_timer(0.2).timeout
+	var back := 0
+	for n in board.find_children("*", "", true, false):
+		if n is HandCard and n.modulate.a == 1.0:
+			back += 1
+	print("DRAGTEST cancel: hand ", n_before, "->", ME.hand.size(), " visible cards ", back)
+	if ME.hand.size() != n_before or back != ME.hand.size():
+		fails += 1
+		print("DRAGTEST FAIL: a cancelled drag did not put the card back")
 	print("DRAGTEST DONE fails=", fails)
 	get_tree().quit(fails)
 
