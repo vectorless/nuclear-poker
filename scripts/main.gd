@@ -1345,7 +1345,6 @@ func _seat(p: NPGame.Player) -> Control:
 	hd.add_theme_constant_override("h_separation", 8)
 	hd.add_theme_constant_override("v_separation", 3)
 	hd.add_child(_lbl(p.name.to_upper(), 20, C_INK, HEAD))
-	hd.add_child(_lbl(p.persona.title, 12, _persona_color(p), MONO))
 	if ME.alive and p.alive and p != ME:
 		if G.neighbors_of(ME).has(p):
 			hd.add_child(_badge("SHORT RANGE", Color("#e9c977"), Color("#33290f"), Color("#7a5d18")))
@@ -1362,7 +1361,7 @@ func _seat(p: NPGame.Player) -> Control:
 	# Fixed-height header (name + badges), clipped, so every seat's cards line up and never move.
 	var hold := Control.new()
 	hold.clip_contents = true
-	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 86
+	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 62
 	hd.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hold.add_child(hd)
 	vb.add_child(hold)
