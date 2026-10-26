@@ -31,7 +31,7 @@ jobs:
         run: godot --headless --import || true
 
       - name: Rules simulation (Classic, 3 and 4 players, 600 AI-vs-AI games, must pass)
-        run: godot --headless -s tests/sim.gd -- classic
+        run: godot --headless -s tests/sim.gd
 
       - name: Export Web build
         run: |

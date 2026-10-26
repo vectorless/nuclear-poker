@@ -5,14 +5,14 @@ extends SceneTree
 func _init() -> void:
 	var fails := 0
 	for np in [3, 4, 5]:
-		for bio in ["off", "2035"]:
-			for seed_i in range(1, 61):
+		for rep_i in range(2):
+			for seed_i in range(1 + rep_i * 60, 61 + rep_i * 60):
 				var plist: Array = [{"name": "Me", "human": true}]
 				var ids := ["hawk", "dove", "opp", "wild"]
 				for i in range(np - 1):
 					plist.append({"name": "AI%d" % i, "persona": ids[(seed_i + i) % 4]})
 				var g := NPGame.new()
-				g.setup({"mode": "classic", "bio": bio, "seed": seed_i * 31, "players": plist})
+				g.setup({"seed": seed_i * 31, "players": plist})
 				var me: NPGame.Player = g.players[0]
 				var guard := 0
 				var err := ""
@@ -40,7 +40,7 @@ func _init() -> void:
 					err = "stuck: phase=%s turn=%d cur=%s queue=%s alive=%d deck=%d debts=%d" % [g.phase, g.turn_no, g.cur().name, str(g.war_queue), g.alive_list().size(), g.deck.size(), g.debts.size()]
 				if err != "":
 					fails += 1
-					print("FAIL np=", np, " ", bio, " seed ", seed_i, ": ", err)
+					print("FAIL np=", np, " seed ", seed_i, ": ", err)
 	print("HUMAN SIM ", "OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)
 
