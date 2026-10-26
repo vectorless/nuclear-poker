@@ -68,6 +68,9 @@ var total: Dictionary = {}
 # with you, slower to agree to stand down - and more willing to threaten or attack you.
 const TRUST_START := 0.6
 var trust: Dictionary = {}
+# Voluntary disarmament. pid -> turn_no it disarmed of its own accord; cleared if it re-arms by
+# attacking or threatening again (a breach of faith).
+var disarmed: Dictionary = {}
 
 # ---------------------------------------------------------------- helpers
 func _shuffle(arr: Array) -> void:
@@ -160,6 +163,64 @@ func warmth(viewer: Player, target: Player) -> float:
 ## a card it has no use for is neutral. Only the two partners know what changed hands (face down).
 func _favour(receiver: Player, giver: Player, c: Dictionary) -> void:
 	_shift_trust(receiver, giver, 0.16 * maxf(0.0, _gain(receiver, c) - 0.4))
+
+## ---- disarmament (every reaction is shaped by the observer's character)
+func is_disarmed(x: Player) -> bool:
+	return disarmed.has(x.id) and caps_held(x).is_empty()
+
+## p disarmed of its own accord: a costly, public signal of peaceful intent. Cautious, fearful powers
+## warm to it most; hawks barely care.
+func _on_disarm(p: Player) -> void:
+	disarmed[p.id] = turn_no
+	for v in others(p):
+		var pe: Dictionary = v.persona if not v.human else {"caution": 0.5, "aggr": 0.5, "fear": 0.5}
+		_shift_trust(v, p, 0.04 + 0.14 * float(pe.caution) + 0.04 * float(pe.fear) - 0.05 * float(pe.aggr))
+
+## Someone who disarmed turns to force again: treated almost like a broken deal by everyone.
+func _breach_of_faith(p: Player) -> void:
+	if not disarmed.has(p.id):
+		return
+	disarmed.erase(p.id)
+	log_msg("%s takes up arms again after disarming - a breach of faith." % p.name, "reveal")
+	for v in others(p):
+		var pe: Dictionary = v.persona if not v.human else {"caution": 0.5, "aggr": 0.5}
+		_shift_trust(v, p, -(0.2 + 0.15 * float(pe.caution)))
+
+## Attacking a power that disarmed: the table condemns it, the cautious most of all.
+func _condemn(attacker: Player, victim: Player) -> void:
+	log_msg("The world condemns %s's attack on %s, a disarmed power." % [attacker.name, victim.name], "reveal")
+	for v in others(attacker):
+		if v == victim:
+			continue
+		var pe: Dictionary = v.persona if not v.human else {"caution": 0.5, "aggr": 0.5}
+		_shift_trust(v, attacker, -(0.18 + 0.2 * float(pe.caution) - 0.08 * float(pe.aggr)))
+
+## Would AI p lay down its weapons now? Peaceful, cautious characters do when they feel safe and
+## trust the table - more readily once others have gone first. Hawks almost never do.
+func ai_maybe_disarm(p: Player) -> bool:
+	if p.human or not p.alive or caps_held(p).is_empty() or not prompt.is_empty():
+		return false
+	var pe := p.persona
+	var B := belief(p)
+	var max_t := 0.0
+	var trust_sum := 0.0
+	var n := 0
+	var others_disarmed := 0
+	for x in others(p):
+		max_t = maxf(max_t, threat_on(B, x, p))
+		trust_sum += trust_of(p, x)
+		n += 1
+		if is_disarmed(x):
+			others_disarmed += 1
+	if n == 0 or max_t > 0.3:
+		return false
+	var avg_trust := trust_sum / n
+	var pr := (0.03 + 0.12 * float(pe.caution) + 0.06 * others_disarmed) * (1.0 - float(pe.aggr)) * clampf((avg_trust - 0.45) * 4.0, 0.0, 1.5)
+	if is_superpower(p):
+		pr *= 0.3
+	if rng.randf() < pr:
+		return disarm_caps(p)
+	return false
 
 ## 0 = no grievance; up to ~0.6 for someone who has betrayed this player repeatedly.
 func grudge(viewer: Player, target: Player) -> float:
@@ -299,6 +360,9 @@ func _show_cards(p: Player, keys: Array) -> Array:
 func perform_attacks(list: Array) -> void:
 	var victims := {}   # victim id -> attacker
 	for a in list:
+		_breach_of_faith(a.p)
+		if int(a.target) >= 0 and is_disarmed(by_id(int(a.target))):
+			_condemn(a.p, by_id(int(a.target)))
 		var shown := _show_cards(a.p, reveal_keys(a.type))
 		var tgt = null
 		if int(a.target) >= 0:
@@ -699,6 +763,7 @@ func ai_honour(p: Player) -> void:
 		renege(p)
 
 func ai_play_classic(p: Player) -> bool:
+	ai_maybe_disarm(p)
 	var B := belief(p)
 	var want := false
 	if not trade_tried and p.hand.size() >= 1:
@@ -776,6 +841,7 @@ func disarm_caps(p: Player) -> bool:
 		return false
 	var names := _return_caps(p)
 	log_msg("%s DISARMS - returns %s to the deck." % [p.name, ", ".join(names)], "reveal")
+	_on_disarm(p)
 	event.emit("disarm_all", {"p": p})
 	return true
 
@@ -866,6 +932,7 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 		return true
 	if c.kind == "threat":
 		var tt := by_id(int(c.target))
+		_breach_of_faith(p)
 		last_threat[p.id] = turn_no
 		log_msg("%s threatens %s: give up ALL your Capability cards - or else." % [p.name, tt.name], "attack")
 		event.emit("threat", {"from": p, "to": tt})
@@ -979,6 +1046,8 @@ func score_nuke(B: Dictionary, p: Player, x: Player) -> float:
 	var s: float = float(pe.fear) * t + float(pe.aggr) * 0.6 - float(pe.caution) * 1.5 * rev + (0.35 if al.size() == 2 else 0.0)
 	s += (0.5 + 0.5 * float(pe.aggr)) * grudge(p, x)      # betrayal breeds hostility
 	s -= (1.0 - 0.4 * float(pe.aggr)) * 1.2 * warmth(p, x)      # allies are spared
+	if is_disarmed(x):
+		s += 0.3 * float(pe.aggr) - 0.6 * float(pe.caution)      # an easy target - or an unthinkable one
 	if al.size() >= 3:
 		for y in others(p):
 			if y == x:
@@ -1104,6 +1173,8 @@ func ceasefire_score(p: Player, proposer: Player) -> float:
 	var proposer_armed := not attack_types(proposer, true).is_empty()
 	if proposer_armed:
 		s += 0.15
+	elif is_disarmed(proposer):
+		s += 0.1 + 0.35 * float(pe.caution) - 0.2 * float(pe.aggr)      # they laid down their arms first
 	elif can_strike:
 		s -= 0.2 * float(pe.aggr)                      # they are defenceless and we are not
 	s -= 1.2 * grudge(p, proposer)
