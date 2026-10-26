@@ -2,16 +2,16 @@ extends Control
 ## Nuclear Poker — Godot UI. Talks to NPGame (engine.gd). All controls are built in code.
 ## Game design: Vinay Gupta. Print-and-play v4.2: Jonathan Korman. Card designs inspired by Ian Willey.
 
-const C_BG := Color("#0a0d11")
-const C_BG2 := Color("#10151b")
-const C_PANEL := Color("#151b23")
-const C_PANEL2 := Color("#1b232d")
-const C_LINE := Color("#2a3644")
-const C_INK := Color("#e9eef3")
-const C_MUT := Color("#8c9aab")
-const C_AMBER := Color("#f2b134")
-const C_RED := Color("#e5483f")
-const C_GREEN := Color("#3ecf8e")
+const C_BG := Color("#121309")
+const C_BG2 := Color("#191a10")
+const C_PANEL := Color("#22241ae6")
+const C_PANEL2 := Color("#2b2d1f")
+const C_LINE := Color("#57573a")
+const C_INK := Color("#efe5c8")
+const C_MUT := Color("#b0a684")
+const C_AMBER := Color("#d9a73e")
+const C_RED := Color("#b8432f")
+const C_GREEN := Color("#a3b866")
 
 const ORDER := ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super"]
 const AI_DELAY := 1.0              # seconds between AI steps (divided by `speed`)
@@ -28,6 +28,7 @@ const CARD_DESC := {
 }
 
 var HEAD: Font
+var ui_theme: Theme
 var MONO: Font
 var TEX := {}
 
@@ -80,7 +81,7 @@ class Trefoil extends Control:
 	func _draw() -> void:
 		var c := size / 2.0
 		var r := minf(size.x, size.y) / 2.0
-		draw_circle(c, r, Color("#f2b134"))
+		draw_circle(c, r, Color("#d9a73e"))
 		for k in range(3):
 			var mid := -PI / 2.0 + k * TAU / 3.0
 			var pts := PackedVector2Array()
@@ -90,38 +91,22 @@ class Trefoil extends Control:
 			for i in range(12, -1, -1):
 				var a2 := mid - PI / 6.0 + (PI / 3.0) * i / 12.0
 				pts.append(c + Vector2(cos(a2), sin(a2)) * r * 0.26)
-			draw_colored_polygon(pts, Color("#14181d"))
-		draw_circle(c, r * 0.12, Color("#14181d"))
+			draw_colored_polygon(pts, Color("#18190f"))
+		draw_circle(c, r * 0.12, Color("#18190f"))
 
 class Hazard extends Control:
 	func _draw() -> void:
-		draw_rect(Rect2(Vector2.ZERO, size), Color("#14181d"))
+		draw_rect(Rect2(Vector2.ZERO, size), Color("#18190f"))
 		var x := -size.y
 		while x < size.x + size.y:
-			draw_colored_polygon(PackedVector2Array([Vector2(x, size.y), Vector2(x + 12, size.y), Vector2(x + 12 + size.y, 0), Vector2(x + size.y, 0)]), Color("#f2b134"))
+			draw_colored_polygon(PackedVector2Array([Vector2(x, size.y), Vector2(x + 12, size.y), Vector2(x + 12 + size.y, 0), Vector2(x + size.y, 0)]), Color("#d9a73e"))
 			x += 24.0
 
 class CardBack extends Control:
+	static var tex: Texture2D
 	func _draw() -> void:
-		var rect := Rect2(Vector2.ZERO, size)
-		var base := StyleBoxFlat.new()
-		base.bg_color = Color("#10151b")
-		base.set_corner_radius_all(int(maxf(3.0, size.x * 0.07)))
-		draw_style_box(base, rect)
-		var c := size / 2.0
-		for k in range(12):
-			var a := TAU * k / 12.0
-			var d := Vector2(cos(a), sin(a))
-			var lim := minf((size.x / 2.0 - 3.0) / maxf(0.001, absf(d.x)), (size.y / 2.0 - 3.0) / maxf(0.001, absf(d.y)))
-			if k % 2 == 0:
-				draw_line(c, c + d * lim, Color("#1d252f"), maxf(3.0, size.x * 0.12))
-		draw_circle(c, maxf(3.0, size.x * 0.09), Color("#d9a22e"))
-		var border := StyleBoxFlat.new()
-		border.draw_center = false
-		border.border_color = Color("#38465a")
-		border.set_border_width_all(2)
-		border.set_corner_radius_all(int(maxf(3.0, size.x * 0.07)))
-		draw_style_box(border, rect)
+		if tex != null:
+			draw_texture_rect(tex, Rect2(Vector2.ZERO, size), false)
 
 class HandCard extends Control:
 	signal picked(cid: int, node: Control)
@@ -261,10 +246,10 @@ class TableMap extends Control:
 		for k in range(48):
 			var a := TAU * k / 48.0
 			poly.append(c + Vector2(cos(a) * (rx + 8.0), sin(a) * (ry + 8.0)))
-		draw_colored_polygon(poly, Color("#10151b"))
+		draw_colored_polygon(poly, Color("#191a10"))
 		var closed := poly.duplicate()
 		closed.append(poly[0])
-		draw_polyline(closed, Color("#2a3644"), 1.5, true)
+		draw_polyline(closed, Color("#57573a"), 1.5, true)
 		var pts: Array = []
 		for i in range(n):
 			var th := PI / 2.0 + TAU * i / n
@@ -273,25 +258,25 @@ class TableMap extends Control:
 			var a2: Vector2 = pts[l[0]]
 			var b2: Vector2 = pts[l[1]]
 			if l[2] == "short":
-				draw_line(a2, b2, Color("#f2b134"), 3.0, true)
+				draw_line(a2, b2, Color("#d9a73e"), 3.0, true)
 			else:
-				draw_dashed_line(a2, b2, Color("#8c9aab"), 2.0, 6.0, true, true)
+				draw_dashed_line(a2, b2, Color("#b0a684"), 2.0, 6.0, true, true)
 		for i in range(n):
 			var s: Dictionary = seats[i]
 			var p: Vector2 = pts[i]
 			var col: Color = s.color
 			if not s.alive:
-				col = Color("#3a4350")
+				col = Color("#58573b")
 			if s.turn and s.alive:
 				draw_circle(p, 19.0, Color(0.95, 0.69, 0.2, 0.35))
 			draw_circle(p, 13.0, col)
 			if s.you:
-				draw_arc(p, 16.0, 0.0, TAU, 28, Color("#3ecf8e"), 2.5, true)
+				draw_arc(p, 16.0, 0.0, TAU, 28, Color("#a3b866"), 2.5, true)
 			if s.tested and s.alive:
-				draw_circle(p + Vector2(11.0, -11.0), 4.5, Color("#ffd37a"))
+				draw_circle(p + Vector2(11.0, -11.0), 4.5, Color("#e9c977"))
 			if not s.alive:
-				draw_line(p + Vector2(-7, -7), p + Vector2(7, 7), Color("#ff6a60"), 2.5, true)
-				draw_line(p + Vector2(-7, 7), p + Vector2(7, -7), Color("#ff6a60"), 2.5, true)
+				draw_line(p + Vector2(-7, -7), p + Vector2(7, 7), Color("#d0604a"), 2.5, true)
+				draw_line(p + Vector2(-7, 7), p + Vector2(7, -7), Color("#d0604a"), 2.5, true)
 			var txt: String = s.name
 			var fs := 12
 			var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
@@ -303,7 +288,7 @@ class TableMap extends Control:
 				lp = Vector2(p.x + 21.0, p.y + 4.0)
 			else:
 				lp = Vector2(p.x - 21.0 - w, p.y + 4.0)
-			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#e9eef3") if s.alive else Color("#667587"))
+			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#efe5c8") if s.alive else Color("#837d65"))
 
 # ====================================================================== style helpers
 func _sb(bg: Color, border := Color(0, 0, 0, 0), bw := 0, radius := 10, pad := 0) -> StyleBoxFlat:
@@ -352,7 +337,7 @@ func _btn(text: String, kind := "default", fsize := 16) -> Button:
 	var bd := C_LINE
 	var fg := C_INK
 	var hbd := C_AMBER
-	var hbg := Color("#222a35")
+	var hbg := Color("#2b2c1e")
 	match kind:
 		"primary":
 			bg = C_AMBER
@@ -451,10 +436,17 @@ func _persona_color(p: NPGame.Player) -> Color:
 # ====================================================================== boot
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	HEAD = load("res://fonts/Oswald-Medium.woff2")
-	MONO = load("res://fonts/ShareTechMono.woff2")
+	# WWII look: stencil headings, typewriter text, field-manual cards on an old campaign map.
+	HEAD = load("res://fonts/StardosStencil-Bold.ttf")
+	MONO = load("res://fonts/SpecialElite-Regular.ttf")
+	var th := Theme.new()
+	th.default_font = load("res://fonts/CourierPrime-Regular.ttf")
+	th.set_font("bold_font", "RichTextLabel", load("res://fonts/CourierPrime-Bold.ttf"))
+	theme = th
+	ui_theme = th
 	for k in ORDER:
-		TEX[k] = load("res://assets/%s.png" % k)
+		TEX[k] = load("res://assets/ww2/%s.png" % k)
+	CardBack.tex = load("res://assets/ww2/back.png")
 	_load_cfg()
 	if bool(cfg.fullscreen) and not OS.has_feature("web") and DisplayServer.get_name() != "headless":
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
@@ -463,6 +455,13 @@ func _ready() -> void:
 	bg.color = C_BG
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
+	var map := TextureRect.new()
+	map.texture = load("res://assets/ww2/table.jpg")
+	map.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	map.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	map.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(map)
 	menu_root = _build_menu()
 	add_child(menu_root)
 	game_root = _build_shell()
@@ -475,6 +474,7 @@ func _ready() -> void:
 		var c := Control.new()
 		c.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		c.theme = ui_theme      # the overlay is a CanvasLayer, so it does not inherit our theme
 		overlay.add_child(c)
 		set(nm, c)
 	get_viewport().size_changed.connect(_on_resize)
@@ -559,18 +559,16 @@ func snd(kind: String) -> void:
 func _build_menu() -> Control:
 	var root := Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var scroll := ScrollContainer.new()
-	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_child(scroll)
 	var outer := VBoxContainer.new()
-	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	outer.add_theme_constant_override("separation", 0)
-	scroll.add_child(outer)
+	root.add_child(outer)
 	var hz := Hazard.new()
 	hz.custom_minimum_size = Vector2(0, 10)
 	outer.add_child(hz)
 	var center := CenterContainer.new()
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	outer.add_child(center)
 	var wrap := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
@@ -629,12 +627,21 @@ func _build_menu() -> Control:
 	b3.add_child(name_edit)
 	opp_btns.clear()
 	opp_lbls.clear()
+	# opponents in a 2 x 2 grid, so even a 5-player table fits without scrolling
+	var og := GridContainer.new()
+	og.columns = 2
+	og.add_theme_constant_override("h_separation", 10)
+	og.add_theme_constant_override("v_separation", 8)
+	b3.add_child(og)
 	for i in range(4):
-		var ol := _lbl("OPPONENT %d" % (i + 1), 12, C_MUT, MONO)
-		b3.add_child(ol)
-		opp_lbls.append(ol)
+		var cell := VBoxContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.add_theme_constant_override("separation", 3)
+		cell.add_child(_lbl("OPPONENT %d" % (i + 1), 12, C_MUT, MONO))
+		opp_lbls.append(cell)
 		var ob := OptionButton.new()
 		ob.focus_mode = Control.FOCUS_NONE
+		ob.clip_text = true
 		ob.add_item("Random")
 		for pid in ["hawk", "dove", "opp", "wild"]:
 			var pe: Dictionary = NPGame.PERSONAS[pid]
@@ -642,8 +649,15 @@ func _build_menu() -> Control:
 		for st in ["normal", "hover", "pressed"]:
 			ob.add_theme_stylebox_override(st, _sb(C_PANEL2, C_LINE, 1, 8, 9))
 		ob.select(maxi(0, PERSONA_IDS.find(cfg["p%d" % (i + 1)])))
-		b3.add_child(ob)
+		cell.add_child(ob)
+		og.add_child(cell)
 		opp_btns.append(ob)
+	var strip := HFlowContainer.new()
+	strip.add_theme_constant_override("h_separation", 6)
+	strip.add_theme_constant_override("v_separation", 6)
+	for k in ORDER:
+		strip.add_child(_tex(k, 56))
+	b1.add_child(strip)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var begin := _btn("Begin", "primary", 22)
@@ -656,21 +670,11 @@ func _build_menu() -> Control:
 	fsm.pressed.connect(_toggle_fullscreen)
 	row.add_child(fsm)
 	btn["fs_menu"] = fsm
-	var spc := Control.new()
-	spc.custom_minimum_size = Vector2(0, 8)
-	b3.add_child(spc)
-	b3.add_child(row)
+	left.add_child(row)
 	btn["begin"] = begin
-
-	var cred := _rtl("Game design by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url]) · card designs inspired by [b]Ian Willey[/b] · print-and-play v4.2 by [b]Jonathan Korman[/b] ([url=https://miniver.itch.io/nuclear-poker]miniver.itch.io[/url]).\nThis is an unofficial digital adaptation using the print-and-play card art. \"The only winning move is not to play.\"", 13, C_MUT)
+	var cred := _rtl("Game design by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url]) · card designs inspired by [b]Ian Willey[/b] · print-and-play v4.2 by [b]Jonathan Korman[/b] ([url=https://miniver.itch.io/nuclear-poker]miniver.itch.io[/url]). Unofficial digital adaptation. \"The only winning move is not to play.\"", 12, C_MUT)
 	cred.meta_clicked.connect(func(m): OS.shell_open(str(m)))
 	right.add_child(cred)
-	var strip := HFlowContainer.new()
-	strip.add_theme_constant_override("h_separation", 6)
-	strip.add_theme_constant_override("v_separation", 6)
-	for k in ORDER:
-		strip.add_child(_tex(k, 60))
-	b1.add_child(strip)
 	_refresh_opts()
 	return root
 
@@ -749,7 +753,7 @@ func _build_shell() -> Control:
 	logbox.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	logbox.add_theme_font_override("normal_font", MONO)
 	logbox.add_theme_font_size_override("normal_font_size", 13)
-	logbox.add_theme_color_override("default_color", Color("#aab6c3"))
+	logbox.add_theme_color_override("default_color", Color("#c8bd98"))
 	sv.add_child(logbox)
 	return root
 
@@ -907,6 +911,9 @@ func _render_top() -> void:
 		btn["disarm"] = db
 	var cf := _btn("Propose stand-down", "default", 13)
 	cf.disabled = G.over or not ME.alive
+	if not cf.disabled and not G.can_propose_ceasefire(ME):
+		cf.disabled = true
+		cf.tooltip_text = "Refused - you can ask again after a full round, or once something changes."
 	cf.pressed.connect(_act_ceasefire)
 	topbar.add_child(cf)
 	var ru := _btn("Rules", "default", 13)
@@ -1007,7 +1014,7 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	pc.on_drop = func(d): _answer_trade(int(d.cid))
 	if p == ME:
 		me_zone = pc
-	pc.add_theme_stylebox_override("panel", _sb(Color("#0f1a24"), Color("#2f5f8f"), 1, 8, 6))
+	pc.add_theme_stylebox_override("panel", _sb(Color("#1d1e13e6"), Color("#6e6743"), 1, 8, 6))
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 3)
 	pc.add_child(vb)
@@ -1016,7 +1023,7 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	var hdr := HBoxContainer.new()
 	hdr.add_theme_constant_override("separation", 8)
 	hdr.custom_minimum_size.y = 30 if p == ME else 14      # same height with or without buttons
-	hdr.add_child(_lbl("TRADE AREA", 11, Color("#9fd2ff"), MONO))
+	hdr.add_child(_lbl("TRADE AREA", 11, Color("#ddcc98"), MONO))
 	hdr.add_child(_spacer())
 	vb.add_child(hdr)
 	# Every card in play in a trade is shown in the trade space of the player it is meant FOR,
@@ -1037,7 +1044,7 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 		slot.add_child(cap)
 		var cp := PanelContainer.new()
 		cp.position = Vector2(0, 16)
-		cp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#9fd2ff"), 2, 5, 0))
+		cp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#ddcc98"), 2, 5, 0))
 		var tx := _tex(it.c.key, w)
 		tx.tooltip_text = NPGame.INFO[it.c.key].name + " - " + it.tip
 		cp.add_child(tx)
@@ -1106,21 +1113,21 @@ func _seat(p: NPGame.Player) -> Control:
 		if G.neighbors_of(ME).has(p):
 			var al := G.alive_list()
 			var side := "LEFT" if al[(al.find(ME) + 1) % al.size()] == p else "RIGHT"
-			hd.add_child(_badge("ON YOUR %s - SHORT RANGE" % side, Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
+			hd.add_child(_badge("ON YOUR %s - SHORT RANGE" % side, Color("#e9c977"), Color("#33290f"), Color("#7a5d18")))
 		else:
 			hd.add_child(_badge("ACROSS - LONG RANGE ONLY", C_MUT, C_PANEL2, C_LINE))
 	if p.alive:
 		for d in G.debts:
 			if d.to == p.id:
-				hd.add_child(_badge("OWES %s A CARD" % ("YOU" if d.from == ME.id else G.players[d.from].name.to_upper()), Color("#9fd2ff"), Color("#101c2a"), Color("#2f5f8f")))
+				hd.add_child(_badge("OWES %s A CARD" % ("YOU" if d.from == ME.id else G.players[d.from].name.to_upper()), Color("#ddcc98"), Color("#2a2716"), Color("#6e6743")))
 	if p.tested:
-		hd.add_child(_badge("TESTED", Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
+		hd.add_child(_badge("TESTED", Color("#e9c977"), Color("#33290f"), Color("#7a5d18")))
 	if not p.alive:
 		hd.add_child(_badge(("killed by " + G.players[p.eliminated_by].name) if p.eliminated_by >= 0 else "eliminated", C_MUT, C_PANEL2, C_LINE))
 	# Fixed-height header (name + badges), clipped, so every seat's cards line up and never move.
 	var hold := Control.new()
 	hold.clip_contents = true
-	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 74
+	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 86
 	hd.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	hold.add_child(hd)
 	vb.add_child(hold)
@@ -1144,7 +1151,7 @@ func _seat(p: NPGame.Player) -> Control:
 	vb.add_child(_trade_zone(p, mini_w))
 	if not p.alive:
 		pc.modulate = Color(0.55, 0.55, 0.55)
-		var ov := _lbl("ELIMINATED", 26, Color("#ff6a60"), HEAD)
+		var ov := _lbl("ELIMINATED", 26, Color("#d0604a"), HEAD)
 		ov.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		ov.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		ov.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1307,15 +1314,15 @@ func _me_panel() -> Control:
 	hd.add_child(_lbl(ME.name.to_upper(), 20, C_INK, HEAD))
 	hd.add_child(_lbl("You", 12, C_GREEN, MONO))
 	if ME.tested:
-		hd.add_child(_badge("TESTED", Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
+		hd.add_child(_badge("TESTED", Color("#e9c977"), Color("#33290f"), Color("#7a5d18")))
 	if not ME.alive:
 		hd.add_child(_badge("eliminated", C_MUT, C_PANEL2, C_LINE))
 	if ME.alive:
 		for d in G.debts:
 			if d.to == ME.id:
-				hd.add_child(_badge("YOU OWE %s A CARD" % G.players[d.from].name.to_upper(), Color("#9fd2ff"), Color("#101c2a"), Color("#2f5f8f")))
+				hd.add_child(_badge("YOU OWE %s A CARD" % G.players[d.from].name.to_upper(), Color("#ddcc98"), Color("#2a2716"), Color("#6e6743")))
 			elif d.from == ME.id:
-				hd.add_child(_badge("%s OWES YOU A CARD" % G.players[d.to].name.to_upper(), Color("#9fd2ff"), Color("#101c2a"), Color("#2f5f8f")))
+				hd.add_child(_badge("%s OWES YOU A CARD" % G.players[d.to].name.to_upper(), Color("#ddcc98"), Color("#2a2716"), Color("#6e6743")))
 	hd.add_child(_spacer())
 	hd.add_child(_lbl("%d in hand" % ME.hand.size(), 12, C_MUT, MONO))
 	vb.add_child(hd)
@@ -1342,7 +1349,7 @@ func _me_panel() -> Control:
 		else:
 			var ph := PanelContainer.new()
 			ph.custom_minimum_size = Vector2(gw, gw * 430.0 / 330.0)
-			ph.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#1d2733"), 1, 4, 0))
+			ph.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#34341f"), 1, 4, 0))
 			grid.add_child(ph)
 	tb.add_child(grid)
 	row.add_child(tb)
@@ -1484,7 +1491,7 @@ func _render_side() -> void:
 	var tech_bits: Array = []
 	for k in NPGame.TECH:
 		var have := G.holds(ME, k)
-		tech_bits.append("[color=%s]%s %s[/color]" % ["#3ecf8e" if have else "#667587", "+" if have else "-", NPGame.INFO[k].name])
+		tech_bits.append("[color=%s]%s %s[/color]" % ["#a3b866" if have else "#837d65", "+" if have else "-", NPGame.INFO[k].name])
 	lines.append("  ".join(tech_bits))
 	var pre := {
 		"short": tested,
@@ -1493,13 +1500,13 @@ func _render_side() -> void:
 		"super": tested and G.has_all_caps(ME)}
 	for k in NPGame.CAPS:
 		var have2 := G.holds(ME, k)
-		var col := "#667587"
+		var col := "#837d65"
 		var mark := "-"
 		if have2 and pre[k]:
-			col = "#3ecf8e"
+			col = "#a3b866"
 			mark = "armed"
 		elif have2:
-			col = "#f2b134"
+			col = "#d9a73e"
 			mark = "held"
 		lines.append("[color=%s]%s: %s[/color]" % [col, NPGame.INFO[k].name, mark])
 	var need := 0
@@ -1513,11 +1520,11 @@ func _render_side() -> void:
 	else:
 		lines.append("%d Technolog%s short of a Nuclear Test." % [need, "y" if need == 1 else "ies"])
 	arsenal.text = "[color=#f2b134][b]YOUR ARSENAL[/b][/color]\n" + "\n".join(lines)
-	var tones := {"attack": "#ff8b82", "death": "#ff5b50", "test": "#ffd37a", "reveal": "#9fd2ff", "quiet": "#66758a", "sys": "#f2b134"}
+	var tones := {"attack": "#ff8b82", "death": "#ff5b50", "test": "#e9c977", "reveal": "#ddcc98", "quiet": "#837d65", "sys": "#d9a73e"}
 	while log_shown < G.log_entries.size():
 		var e: Dictionary = G.log_entries[log_shown]
 		log_shown += 1
-		logbox.append_text("[color=%s]%s[/color]\n" % [tones.get(e.tone, "#aab6c3"), e.text.replace("[", "(")])
+		logbox.append_text("[color=%s]%s[/color]\n" % [tones.get(e.tone, "#c8bd98"), e.text.replace("[", "(")])
 
 # ====================================================================== actions
 func _after_human() -> void:
@@ -1545,6 +1552,9 @@ func _act_counter(tid: int) -> void:
 
 func _act_ceasefire() -> void:
 	var r := G.propose_ceasefire(ME)
+	if r.get("blocked", false):
+		_toast("They have just refused. Ask again after a full round - or once something changes.")
+		return
 	if r.refuses.is_empty():
 		_toast("Everyone agrees to stop.")
 	else:
@@ -1626,7 +1636,7 @@ func _card_menu(cid: int, node: Control) -> void:
 			_close_popup())
 	popup.add_child(catcher)
 	var pn := PanelContainer.new()
-	pn.add_theme_stylebox_override("panel", _sb(Color("#0f141a"), C_AMBER, 1, 10, 10))
+	pn.add_theme_stylebox_override("panel", _sb(Color("#17180e"), C_AMBER, 1, 10, 10))
 	pn.custom_minimum_size.x = 250
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 5)
@@ -1780,7 +1790,7 @@ func _threat_modal() -> void:
 		txt += "\n\nYou hold no Capability cards, so you have nothing to give up."
 	else:
 		txt += "\n\nYou hold: %s. If you refuse, nothing happens automatically - but they may attack." % ", ".join(held.map(func(c): return NPGame.INFO[c.key].name))
-	vb.add_child(_rtl(txt, 15, Color("#c3ccd6")))
+	vb.add_child(_rtl(txt, 15, Color("#ddd3b4")))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var y := _btn("Give in - disarm", "danger")
@@ -1808,7 +1818,7 @@ func _threaten_modal() -> void:
 		return
 	var vb := _open_modal("Threaten", true, false, true)
 	_close_btn(vb, "Cancel")
-	vb.add_child(_rtl("Demand that a player returns [b]all their Capability cards[/b] to the deck. Only players you could attack can be threatened. They may give in or refuse - if they refuse nothing happens automatically, so be ready to follow through (or not).", 15, Color("#c3ccd6")))
+	vb.add_child(_rtl("Demand that a player returns [b]all their Capability cards[/b] to the deck. Only players you could attack can be threatened. They may give in or refuse - if they refuse nothing happens automatically, so be ready to follow through (or not).", 15, Color("#ddd3b4")))
 	var fl := _atk_panel(vb, "Choose a target", "")
 	for tid in ids:
 		var rel := " (next to you)" if G.neighbors_of(ME).has(G.players[tid]) else " (across the table)"
@@ -1826,7 +1836,7 @@ func _disarm_modal() -> void:
 	if held.is_empty():
 		return
 	var vb := _open_modal("Disarm?", true, false, true)
-	vb.add_child(_rtl("Return [b]all your Capability cards[/b] (%s) to the deck. Your Technologies stay on the table. You will be unable to attack or retaliate until you collect Capabilities again." % ", ".join(held.map(func(c): return NPGame.INFO[c.key].name)), 15, Color("#c3ccd6")))
+	vb.add_child(_rtl("Return [b]all your Capability cards[/b] (%s) to the deck. Your Technologies stay on the table. You will be unable to attack or retaliate until you collect Capabilities again." % ", ".join(held.map(func(c): return NPGame.INFO[c.key].name)), 15, Color("#ddd3b4")))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var y := _btn("Disarm", "danger")
@@ -1847,7 +1857,7 @@ func _counter_modal() -> void:
 		return
 	var vb := _open_modal("Counter-strike!", true, true, false)
 	var by_txt := (" by [b]%s[/b]" % pr.by.name) if pr.by != null else ""
-	vb.add_child(_rtl("You have been eliminated%s - but your Counter-strike fires. Choose who goes down with you." % by_txt, 15, Color("#c3ccd6")))
+	vb.add_child(_rtl("You have been eliminated%s - but your Counter-strike fires. Choose who goes down with you." % by_txt, 15, Color("#ddd3b4")))
 	var fl := _atk_panel(vb, "Choose a target", "")
 	for id in pr.options:
 		var b := _btn("Target: " + G.players[id].name, "danger")
@@ -1864,7 +1874,7 @@ func _rules_h(vb: VBoxContainer, text: String) -> void:
 	vb.add_child(_lbl(text.to_upper(), 18, C_AMBER, HEAD))
 
 func _rules_p(vb: VBoxContainer, bb: String) -> void:
-	vb.add_child(_rtl(bb, 15, Color("#c3ccd6")))
+	vb.add_child(_rtl(bb, 15, Color("#ddd3b4")))
 
 ## A row of card pictures with an optional one-line caption under each.
 func _card_row(vb: VBoxContainer, keys: Array, notes: Array) -> void:
@@ -1899,7 +1909,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Set up")
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40, 5 players = 48[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive - but the other powers [b]remember[/b]: break deals and they will trust you less, trade with you less, and be quicker to threaten or attack you. Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive - but the other powers [b]remember[/b]: break deals and they will trust you less, trade with you less, and be quicker to threaten or attack you. Deal honestly, again and again, and a partner comes to see you as an [b]ally[/b]: more willing to trade, more likely to keep its word, slower to turn its weapons on you. Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent cards leave the game. Only a [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside, with the spent weapons.")
 	_rules_h(vb, "Threats and disarming")
@@ -1944,7 +1954,7 @@ func _end_modal() -> void:
 	vb.add_child(_lbl("%s  (%d round%s)" % [sub, G.round_no, "" if G.round_no == 1 else "s"], 15, C_MUT, null, true))
 	for p in G.players:
 		var pc := PanelContainer.new()
-		pc.add_theme_stylebox_override("panel", _sb(C_PANEL2, Color("#27664a") if p.alive else Color("#6a2a25"), 1, 8, 10))
+		pc.add_theme_stylebox_override("panel", _sb(C_PANEL2, Color("#5d6d36") if p.alive else Color("#6a2a25"), 1, 8, 10))
 		var hb := HBoxContainer.new()
 		var who := "%s%s - %s" % [p.name, " (you)" if p == ME else "", "survived" if p.alive else ("eliminated" + ((" by " + G.players[p.eliminated_by].name) if p.eliminated_by >= 0 else ""))]
 		hb.add_child(_lbl(who, 15, C_INK if p.alive else Color("#e7b0aa"), null, true))

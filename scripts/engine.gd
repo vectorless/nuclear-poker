@@ -149,6 +149,12 @@ func _deal_outcome(by: Player, victim: Player, kept: bool) -> void:
 		else:
 			_shift_trust(v, by, 0.04 if kept else -0.15)
 
+## Goodwill: above the starting level, trust turns into an alliance. 0 = neutral, up to 0.4 for a
+## partner who has dealt honestly again and again. Allies are spared, favoured as trading partners,
+## dealt with honestly and listened to when they propose to stand down.
+func warmth(viewer: Player, target: Player) -> float:
+	return maxf(0.0, trust_of(viewer, target) - TRUST_START)
+
 ## 0 = no grievance; up to ~0.6 for someone who has betrayed this player repeatedly.
 func grudge(viewer: Player, target: Player) -> float:
 	return maxf(0.0, TRUST_START - trust_of(viewer, target))
@@ -531,6 +537,7 @@ func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
 	x.pub = true
 	t.hand.append(x)
 	debts.append({"from": p.id, "to": t.id, "got": x.id, "pledge": y.id})
+	_shift_trust(t, p, 0.05)      # they handed their card over first
 	log_msg("%s trades %s to %s. %s has pledged %s - to be delivered on %s's next turn." % [p.name, card_name(x), t.name, t.name, card_name(y), t.name])
 	event.emit("give", {"from": p, "to": t, "c": x})
 
@@ -631,7 +638,7 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 		return -1
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from)
+	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
 	if rng.randf() >= clampf(pr, 0.03, 0.95):
 		return -1
 	var y = least_useful(t)
@@ -649,6 +656,7 @@ func ai_honour(p: Player) -> void:
 	var honest := float(p.persona.honest)
 	var creditor := by_id(int(ds[0].from))
 	honest *= clampf(0.4 + trust_of(p, creditor), 0.3, 1.0)      # less honest with those who cheated before
+	honest = minf(0.97, honest + 0.5 * warmth(p, creditor))       # loyal to proven allies
 	var y = _trade_card(p, int(ds[0].pledge))
 	if y != null and usefulness(p, y) > 0.85:
 		honest *= 0.6
@@ -756,7 +764,7 @@ func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 		var expcaps := 0.0
 		for k in CAPS:
 			expcaps += bp(B, x, k)
-		var v := expcaps * (1.0 - 0.8 * revenge_prob(B, x)) * (0.5 + float(p.persona.aggr) + grudge(p, x))
+		var v := expcaps * (1.0 - 0.8 * revenge_prob(B, x)) * (0.5 + float(p.persona.aggr) + grudge(p, x)) * maxf(0.0, 1.0 - 2.0 * warmth(p, x))
 		if v > best_v:
 			best_v = v
 			best = tid
@@ -932,6 +940,7 @@ func score_nuke(B: Dictionary, p: Player, x: Player) -> float:
 	var al := alive_list()
 	var s: float = float(pe.fear) * t + float(pe.aggr) * 0.6 - float(pe.caution) * 1.5 * rev + (0.35 if al.size() == 2 else 0.0)
 	s += (0.5 + 0.5 * float(pe.aggr)) * grudge(p, x)      # betrayal breeds hostility
+	s -= (1.0 - 0.4 * float(pe.aggr)) * 1.2 * warmth(p, x)      # allies are spared
 	if al.size() >= 3:
 		for y in others(p):
 			if y == x:
@@ -980,7 +989,7 @@ func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:
 	var best: Player = targets[0]
 	var best_s := -99.0
 	for t in targets:
-		var s: float = (1.0 if t.tested else 0.0) + bp(B, t, "short") * 0.5 + grudge(p, t)
+		var s: float = (1.0 if t.tested else 0.0) + bp(B, t, "short") * 0.5 + grudge(p, t) - 2.0 * warmth(p, t)
 		if s > best_s:
 			best_s = s
 			best = t
@@ -1013,21 +1022,70 @@ func least_useful(p: Player):
 			best = c
 	return best
 
-func _ai_agrees_ceasefire(p: Player, proposer: Player) -> bool:
-	if rng.randf() < grudge(p, proposer):
-		return false      # "Why would we believe you?"
+## Stand-down. An AI weighs its position rather than rolling dice:
+##   + it is threatened and cannot hit back; it is a peaceful persona; the game has dragged on;
+##     the proposer is a trading ally;
+##     the proposer is armed (a stand-down offered from strength is worth taking)
+##   - it can strike right now (more so if aggressive, most of all as a Superpower);
+##     it is close to a full arsenal; it has a grudge against the proposer; the proposer is
+##     unarmed while it is armed (why stop now?)
+## A refusal stands until something changes on the table (a test, an attack, an elimination,
+## a disarmament) or a full round has passed - asking again straight away gets the same answer.
+var ceasefire_block: Dictionary = {}      # proposer id -> {"until": turn_no, "sig": table signature}
+
+func _caps_count(x: Player) -> int:
+	var n := 0
+	for k in CAPS:
+		if holds(x, k):
+			n += 1
+	return n
+
+func _public_sig() -> String:
+	var parts: Array = []
+	for x in players:
+		parts.append("%d%d%d" % [int(x.alive), int(x.tested), x.table.size()])
+	return ",".join(parts) + "|%d" % out.size()
+
+func ceasefire_score(p: Player, proposer: Player) -> float:
+	var pe := p.persona
 	var B := belief(p)
-	var opts := attack_types(p)
-	if not opts.is_empty() and float(p.persona.aggr) > 0.45 and rng.randf() < 0.7:
-		return false
+	var s := 0.55 + 0.45 * float(pe.caution) - 0.45 * float(pe.aggr)
+	var can_strike := not attack_types(p).is_empty()
 	var max_t := 0.0
 	for x in others(p):
 		max_t = maxf(max_t, threat_on(B, x, p))
-	if max_t > 0.55 and not opts.is_empty():
-		return false
-	return rng.randf() < 0.9
+	if can_strike:
+		s -= 0.25 + 0.35 * float(pe.aggr)
+		if has_all_caps(p) and p.tested:
+			s -= 0.5                                   # a Superpower has little reason to stop
+		s -= 0.25 * max_t * float(pe.aggr)              # threatened hawks strike first
+	else:
+		s += 0.45 * max_t * float(pe.fear)             # threatened and defenceless: take the deal
+	if p.tested:
+		s -= 0.07 * _caps_count(p)                     # close to a full arsenal
+	var proposer_armed := not attack_types(proposer).is_empty()
+	if proposer_armed:
+		s += 0.15
+	elif can_strike:
+		s -= 0.2 * float(pe.aggr)                      # they are defenceless and we are not
+	s -= 1.2 * grudge(p, proposer)
+	s += 0.6 * warmth(p, proposer)                     # an ally's word counts
+	s += minf(0.2, turn_no / 500.0) * (0.5 if can_strike else 1.0)      # war weariness
+	return s
+
+func _ai_agrees_ceasefire(p: Player, proposer: Player) -> bool:
+	return ceasefire_score(p, proposer) + _noise(p) * 0.25 > 0.5
+
+## Is `p` allowed to propose a stand-down right now? (Not straight after a refusal.)
+func can_propose_ceasefire(p: Player) -> bool:
+	var b: Dictionary = ceasefire_block.get(p.id, {})
+	if b.is_empty():
+		return true
+	return turn_no >= int(b.until) or str(b.sig) != _public_sig()
 
 func propose_ceasefire(proposer: Player) -> Dictionary:
+	if not can_propose_ceasefire(proposer):
+		return {"agrees": [], "refuses": [], "blocked": true}
 	var agrees: Array = []
 	var refuses: Array = []
 	for p in others(proposer):
@@ -1038,12 +1096,14 @@ func propose_ceasefire(proposer: Player) -> Dictionary:
 		else:
 			refuses.append(p)
 	if refuses.is_empty():
+		ceasefire_block.erase(proposer.id)
 		log_msg("%s proposes to stop. Everyone agrees." % proposer.name)
 		end_game("ceasefire")
 	else:
+		ceasefire_block[proposer.id] = {"until": turn_no + alive_list().size(), "sig": _public_sig()}
 		var names: Array = refuses.map(func(p): return p.name)
 		log_msg("%s proposes to stop. %s refuse%s." % [proposer.name, " and ".join(names), "s" if refuses.size() == 1 else ""])
-	return {"agrees": agrees, "refuses": refuses}
+	return {"agrees": agrees, "refuses": refuses, "blocked": false}
 
 # ---------------------------------------------------------------- driver
 ## What does the game need next? "over" | "prompt" | "human" | "ai"
