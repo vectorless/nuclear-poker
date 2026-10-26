@@ -156,10 +156,10 @@ func warmth(viewer: Player, target: Player) -> float:
 	return maxf(0.0, trust_of(viewer, target) - TRUST_START)
 
 ## A card arrives in a trade: the more `receiver` needed it, the warmer it feels towards `giver`.
-## A card it really wanted (a missing Technology or Capability) builds goodwill; a useless duplicate
-## counts slightly against. Only the two partners know what changed hands (trades are face down).
+## A card it really wanted (a missing Technology or Capability) builds goodwill; a duplicate or
+## a card it has no use for is neutral. Only the two partners know what changed hands (face down).
 func _favour(receiver: Player, giver: Player, c: Dictionary) -> void:
-	_shift_trust(receiver, giver, 0.16 * (_gain(receiver, c) - 0.4))
+	_shift_trust(receiver, giver, 0.16 * maxf(0.0, _gain(receiver, c) - 0.4))
 
 ## 0 = no grievance; up to ~0.6 for someone who has betrayed this player repeatedly.
 func grudge(viewer: Player, target: Player) -> float:
