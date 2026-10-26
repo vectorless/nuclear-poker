@@ -792,14 +792,16 @@ func _build_menu() -> Control:
 	b3.add_child(_lbl("PLAYERS AT THE TABLE", 12, C_MUT, MONO))
 	players_opt = OptionButton.new()
 	players_opt.focus_mode = Control.FOCUS_NONE
-	players_opt.add_item("3 players - you and two AI powers")
-	players_opt.add_item("4 players - you and three AI powers")
-	players_opt.add_item("5 players - you and four AI powers")
+	# the list just says "N players"; the closed box spells out who is playing
+	for n in [3, 4, 5]:
+		players_opt.add_item("%d players" % n)
 	for st0 in ["normal", "hover", "pressed"]:
 		players_opt.add_theme_stylebox_override(st0, _sb(C_PANEL2, C_LINE, 1, 8, 9))
 	players_opt.select(int(cfg.players) - 3)
+	_players_label()
 	players_opt.item_selected.connect(func(i):
 		cfg.players = str(i + 3)
+		_players_label()
 		_refresh_opts())
 	b3.add_child(players_opt)
 	b3.add_child(_lbl("YOUR CALLSIGN", 12, C_MUT, MONO))
@@ -863,6 +865,10 @@ func _build_menu() -> Control:
 	right.add_child(cred)
 	_refresh_opts()
 	return root
+
+func _players_label() -> void:
+	var n := players_opt.selected + 3
+	players_opt.text = "%d players - you and %s AI powers" % [n, ["two", "three", "four"][n - 3]]
 
 func _refresh_opts() -> void:
 	var n_ai := int(cfg.players) - 1
@@ -2760,6 +2766,16 @@ func _shots() -> void:
 	DirAccess.make_dir_recursive_absolute(d)
 	await get_tree().process_frame
 	await _shot(d + "/0-menu.png")
+	players_opt.show_popup()
+	await get_tree().create_timer(0.3).timeout
+	await _shot(d + "/0b-menu-players.png")
+	players_opt.get_popup().hide()
+	players_opt.select(2)
+	players_opt.item_selected.emit(2)
+	await get_tree().create_timer(0.2).timeout
+	print("PLAYERS label: ", players_opt.text)
+	players_opt.select(0)
+	players_opt.item_selected.emit(0)
 	await _stage("4", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
 	await _shot(d + "/1-board4.png")
 	# hover: a small table card shows large; a hand card grows
