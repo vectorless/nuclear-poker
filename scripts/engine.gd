@@ -287,10 +287,30 @@ func perform_attacks(list: Array) -> void:
 		if tgt != null and tgt.alive:
 			victims[tgt.id] = a.p
 		event.emit("attack", {"attacker": a.p, "type": a.type, "target": tgt})
+		_spend_weapon(a.p, a.type)
 	var vs: Array = []
 	for id in victims.keys():
 		vs.append(by_id(id))
 	kill(vs, victims)
+
+## Firing a weapon destroys it: a Short-range attack uses up the Short-range card, a Long-range
+## attack the Long-range card (Short-range is only a prerequisite and stays). A Superpower attack
+## spends nothing - a Superpower can strike again and again. Spent cards leave the game.
+const SPENT := {"short": "short", "long": "long"}
+
+func _spend_weapon(p: Player, type: String) -> void:
+	if not SPENT.has(type):
+		return
+	var key: String = SPENT[type]
+	for arr in [p.table, p.hand]:
+		for i in range(arr.size()):
+			if arr[i].key == key:
+				var c = arr.pop_at(i)
+				c.pub = true
+				out.append(c)
+				log_msg("%s's %s card is spent." % [p.name, card_name(c)], "quiet")
+				event.emit("spent", {"p": p, "c": c})
+				return
 
 func can_counter(p: Player) -> bool:
 	return p.tested and holds(p, "short") and holds(p, "long") and holds(p, "counter")
@@ -940,7 +960,7 @@ func ai_war_choice(p: Player) -> Dictionary:
 	var best = null
 	var best_score := -9.0
 	for o in attack_types(p):
-		var pen := 0.0 if o.type == "short" else (0.01 if o.type == "long" else 0.02)
+		var pen: float = {"short": 0.0, "long": 0.02, "super": -0.05}[o.type]      # Superpower strikes are free
 		for tid in o.targets:
 			var s2 := score_nuke(B, p, by_id(tid)) - pen
 			if s2 > best_score:

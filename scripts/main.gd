@@ -21,8 +21,8 @@ const CARD_DESC := {
 	"refinement": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
 	"warhead": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
 	"testing": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
-	"short": "Needs a Nuclear Test. Attack: eliminate a player sitting immediately to your left or right.",
-	"long": "Needs Nuclear Test + Short-range. Attack: eliminate any one player.",
+	"short": "Needs a Nuclear Test. Attack: eliminate a player sitting immediately to your left or right. Destroyed when fired.",
+	"long": "Needs Nuclear Test + Short-range. Attack: eliminate any one player. Destroyed when fired.",
 	"counter": "Second Strike. Needs Nuclear Test + Short + Long. When you are eliminated, immediately eliminate one player.",
 	"super": "Needs Nuclear Test + all 4 Capabilities. You are a Nuclear Superpower: strike any player, and strike more than once.",
 }
@@ -180,6 +180,36 @@ class DropTarget extends PanelContainer:
 		elif what == NOTIFICATION_DRAG_END:
 			modulate = Color.WHITE
 
+class CardStrip extends Control:
+	## A fixed-height row of cards that never wraps or grows: when there are too many
+	## to fit, they overlap. Keeps panels the same size as cards come and go.
+	var cw := 40.0
+	var ch := 52.0
+	var gap := 5.0
+	func _init() -> void:
+		clip_contents = true
+		mouse_filter = Control.MOUSE_FILTER_PASS
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_RESIZED or what == NOTIFICATION_READY:
+			layout()
+	func layout() -> void:
+		custom_minimum_size.y = ch
+		var kids: Array = get_children().filter(func(k): return k is Control)
+		var n := kids.size()
+		if n == 0:
+			return
+		var step := cw + gap
+		if n > 1 and size.x > 0.0 and cw + (n - 1) * step > size.x:
+			step = maxf(6.0, (size.x - cw) / float(n - 1))
+		for i in range(n):
+			var k: Control = kids[i]
+			if k is Label:
+				k.size = k.get_minimum_size()
+				k.position = Vector2(i * step, (ch - k.size.y) / 2.0)
+			else:
+				k.position = Vector2(i * step, 0)
+				k.size = Vector2(cw, ch)
+
 class HandView extends Control:
 	var cw := 100.0
 	var ch := 130.0
@@ -187,7 +217,7 @@ class HandView extends Control:
 		if what == NOTIFICATION_RESIZED:
 			layout()
 	func layout() -> void:
-		custom_minimum_size.y = ch + 36.0
+		custom_minimum_size.y = ch + 22.0
 		var cards := get_children()
 		var n := cards.size()
 		if n == 0:
@@ -196,20 +226,20 @@ class HandView extends Control:
 		var overlap := cw * 0.08
 		if n > 1 and n * cw - (n - 1) * overlap > avail:
 			overlap = (n * cw - avail) / (n - 1)
-		overlap = minf(overlap, cw * 0.72)
+		overlap = minf(overlap, cw - 14.0)
 		var total := n * cw - (n - 1) * overlap
-		var x0 := (size.x - total) / 2.0
+		var x0 := maxf(0.0, (size.x - total) / 2.0)
 		for i in range(n):
 			var c: HandCard = cards[i]
 			c.size = Vector2(cw, ch)
-			c.base_y = 28.0
-			c.position = Vector2(x0 + i * (cw - overlap), 28.0)
+			c.base_y = 20.0
+			c.position = Vector2(x0 + i * (cw - overlap), 20.0)
 			if c.fresh:
 				c.fresh = false
 				c.position.y -= 50.0
 				c.modulate.a = 0.0
 				var t := c.create_tween().set_parallel(true)
-				t.tween_property(c, "position:y", 28.0, 0.35)
+				t.tween_property(c, "position:y", 20.0, 0.35)
 				t.tween_property(c, "modulate:a", 1.0, 0.25)
 
 class TableMap extends Control:
@@ -704,6 +734,7 @@ func _build_shell() -> Control:
 	sv.add_theme_constant_override("separation", 8)
 	side.add_child(sv)
 	arsenal = _rtl("", 13)
+	arsenal.custom_minimum_size.y = 150      # fixed, so the map below does not move
 	arsenal.add_theme_font_override("normal_font", MONO)
 	arsenal.add_theme_font_override("bold_font", MONO)
 	sv.add_child(arsenal)
@@ -898,8 +929,8 @@ func _render_board() -> void:
 	_clear(board)
 	btn.clear()
 	var vw := get_viewport_rect().size.x
-	card_w = clampf(vw * 0.07, 76.0, 112.0)
-	mini_w = clampf(vw * (0.036 if G.players.size() < 5 else 0.027), 32.0, 56.0)
+	card_w = clampf(vw * 0.062, 72.0, 112.0)
+	mini_w = clampf(vw * (0.031 if G.players.size() < 5 else 0.027), 32.0, 56.0)
 	var opps := HBoxContainer.new()
 	opps.add_theme_constant_override("separation", 12)
 	for i in range(1, G.players.size()):
@@ -912,16 +943,21 @@ func _zone(label: String, items: Array, empty_text: String) -> VBoxContainer:
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 3)
 	vb.add_child(_lbl(label.to_upper(), 11, C_MUT, MONO))
-	var fl := HFlowContainer.new()
-	fl.add_theme_constant_override("h_separation", 5)
-	fl.add_theme_constant_override("v_separation", 5)
-	fl.custom_minimum_size.y = mini_w * 430.0 / 330.0 + 4
-	for it in items:
-		fl.add_child(it)
-	if items.is_empty():
-		fl.add_child(_lbl(empty_text, 12, C_MUT, MONO))
-	vb.add_child(fl)
+	vb.add_child(_strip(items, mini_w, empty_text))
 	return vb
+
+func _strip(items: Array, w: float, empty_text := "") -> CardStrip:
+	var st := CardStrip.new()
+	st.cw = w
+	st.ch = w * 430.0 / 330.0
+	st.custom_minimum_size.y = st.ch
+	st.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for it in items:
+		st.add_child(it)
+	if items.is_empty() and empty_text != "":
+		st.add_child(_lbl(empty_text, 12, C_MUT, MONO))
+	st.layout.call_deferred()
+	return st
 
 ## The face-up trade area of a seat: an offer waiting for an answer, or a card pledged to a partner.
 func _answering() -> bool:
@@ -978,41 +1014,47 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	var pr := G.prompt
 	var mine: bool = p == ME and not pr.is_empty() and pr.player == ME
 	var hdr := HBoxContainer.new()
-	hdr.add_theme_constant_override("separation", 10)
+	hdr.add_theme_constant_override("separation", 8)
+	hdr.custom_minimum_size.y = 30 if p == ME else 14      # same height with or without buttons
 	hdr.add_child(_lbl("TRADE AREA", 11, Color("#9fd2ff"), MONO))
 	hdr.add_child(_spacer())
 	vb.add_child(hdr)
 	# Every card in play in a trade is shown in the trade space of the player it is meant FOR,
 	# under the name of the player it comes from: an offer in the target's space, an answer in the
 	# offerer's space, a pledged card in the space of the player it is owed to.
-	var fl := HFlowContainer.new()
-	fl.add_theme_constant_override("h_separation", 10)
-	fl.add_theme_constant_override("v_separation", 6)
-	fl.custom_minimum_size.y = w * 430.0 / 330.0 + 18
-	var items := _trade_items_for(p)
-	for it in items:
-		var col := VBoxContainer.new()
-		col.add_theme_constant_override("separation", 2)
-		var cap := _lbl(it.label, 11, C_AMBER, MONO, true)
-		cap.custom_minimum_size.x = maxf(w, 110.0)
-		col.add_child(cap)
+	# Fixed-size slots, so the area never grows or shrinks as cards come and go.
+	var iw := maxf(w, 104.0)
+	var ch := w * 430.0 / 330.0
+	var slots: Array = []
+	for it in _trade_items_for(p):
+		var slot := Control.new()
+		slot.custom_minimum_size = Vector2(iw, ch + 16)
+		var cap := _lbl(it.label, 10, C_AMBER, MONO)
+		cap.clip_text = true
+		cap.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		cap.size = Vector2(iw, 14)
+		cap.tooltip_text = it.label
+		slot.add_child(cap)
 		var cp := PanelContainer.new()
-		cp.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		cp.position = Vector2(0, 16)
 		cp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#9fd2ff"), 2, 5, 0))
 		var tx := _tex(it.c.key, w)
 		tx.tooltip_text = NPGame.INFO[it.c.key].name + " - " + it.tip
 		cp.add_child(tx)
-		col.add_child(cp)
-		fl.add_child(col)
-	if items.is_empty():
-		fl.add_child(_lbl("no offer", 12, C_MUT, MONO))
-	vb.add_child(fl)
+		slot.add_child(cp)
+		slots.append(slot)
+	var hint := "drag a card here to answer" if (mine and str(pr.get("type", "")) == "trade") else "no offer"
+	var st := _strip(slots, iw, hint if slots.is_empty() else "")
+	st.ch = ch + 16
+	st.custom_minimum_size.y = ch + 16
+	st.gap = 8.0
+	vb.add_child(st)
 	if mine and str(pr.get("type", "")) == "trade":
-		var no := _btn("Decline the offer", "default", 13)
+		var no := _btn("Decline", "default", 13)
+		no.tooltip_text = "Decline %s's offer - or drag a card from your hand in here to answer it." % pr.from.name
 		no.pressed.connect(_answer_trade.bind(-1))
 		hdr.add_child(no)
 		btn["trade_no"] = no
-		vb.add_child(_lbl("Drag a card from your hand in here to answer.", 12, C_INK, null, true))
 		var hook := Button.new()      # test hook: lets the UI bot answer without a real drag
 		hook.visible = false
 		hook.pressed.connect(func():
@@ -1023,7 +1065,8 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 		vb.add_child(hook)
 		btn["trade_counter"] = hook
 	elif mine and str(pr.get("type", "")) == "deal":
-		var y := _btn("Accept the deal", "primary", 13)
+		var y := _btn("Accept", "primary", 13)
+		y.tooltip_text = "Your card goes to %s now; theirs reaches you on their next turn - and they may break the deal." % pr.partner.name
 		y.pressed.connect(func():
 			G.answer_deal(true)
 			_after_human())
@@ -1035,7 +1078,6 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 		hdr.add_child(n)
 		btn["deal_yes"] = y
 		btn["deal_no"] = n
-		vb.add_child(_lbl("%s answers with %s. Theirs reaches you on their next turn; they may break the deal." % [pr.partner.name, NPGame.INFO[pr.y_key].name], 12, C_INK, null, true))
 	_pass_through(pc)
 	return pc
 
@@ -1075,7 +1117,13 @@ func _seat(p: NPGame.Player) -> Control:
 		hd.add_child(_badge("TESTED", Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
 	if not p.alive:
 		hd.add_child(_badge(("killed by " + G.players[p.eliminated_by].name) if p.eliminated_by >= 0 else "eliminated", C_MUT, C_PANEL2, C_LINE))
-	vb.add_child(hd)
+	# Fixed-height header (name + badges), clipped, so every seat's cards line up and never move.
+	var hold := Control.new()
+	hold.clip_contents = true
+	hold.custom_minimum_size.y = 52 if G.players.size() < 5 else 74
+	hd.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hold.add_child(hd)
+	vb.add_child(hold)
 	var hand_items: Array = []
 	var unk := 0
 	for c in p.hand:
@@ -1084,12 +1132,10 @@ func _seat(p: NPGame.Player) -> Control:
 		else:
 			unk += 1
 	var backs: Array = []
-	for i in range(mini(unk, 14)):
+	for i in range(unk):
 		var cb := CardBack.new()
 		cb.custom_minimum_size = Vector2(mini_w, mini_w * 430.0 / 330.0)
 		backs.append(cb)
-	if unk > 14:
-		backs.append(_lbl("+%d" % (unk - 14), 12, C_MUT, MONO))
 	vb.add_child(_zone("Hand · %d card%s" % [p.hand.size(), "" if p.hand.size() == 1 else "s"], backs + hand_items, "(empty)"))
 	var tbl: Array = []
 	for c in p.table:
@@ -1112,7 +1158,7 @@ func _banner() -> Control:
 	var text := ""
 	var tone := "n"
 	if G.over:
-		text = "The game is over."
+		text = "[b]The game is over.[/b] This is the final board."
 	elif not ME.alive:
 		text = "You were eliminated. The game continues without you..."
 		tone = "dead"
@@ -1156,7 +1202,7 @@ func _banner() -> Control:
 		bd = Color("#7d2a24")
 	var s := _sb(bg, bd, 1, 10, 10)
 	pc.add_theme_stylebox_override("panel", s)
-	pc.custom_minimum_size.y = 46
+	pc.custom_minimum_size.y = 112      # fixed: text + a row of buttons, so the board below never jumps
 	var hb := HBoxContainer.new()
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	hb.add_theme_constant_override("separation", 12)
@@ -1171,6 +1217,7 @@ func _banner() -> Control:
 	# The buttons for what you can do right now sit under the banner, so they never scroll out of view.
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	col.add_child(hb)
 	col.add_child(_action_bar())
 	pc.add_child(col)
@@ -1256,6 +1303,7 @@ func _me_panel() -> Control:
 	pc.add_child(vb)
 	var hd := HBoxContainer.new()
 	hd.add_theme_constant_override("separation", 8)
+	hd.custom_minimum_size.y = 30
 	hd.add_child(_lbl(ME.name.to_upper(), 20, C_INK, HEAD))
 	hd.add_child(_lbl("You", 12, C_GREEN, MONO))
 	if ME.tested:
@@ -1278,21 +1326,36 @@ func _me_panel() -> Control:
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.add_theme_constant_override("separation", 6)
 	row.add_child(left)
+	# Your cards on the table: a fixed 4 x 2 grid (4 Technologies + up to 4 Capabilities), empty or not.
+	var tb := VBoxContainer.new()
+	tb.add_theme_constant_override("separation", 3)
+	tb.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	tb.add_child(_lbl("ON THE TABLE", 11, C_MUT, MONO))
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	var gw := 40.0
+	for i in range(8):
+		if i < ME.table.size():
+			grid.add_child(_tex(ME.table[i].key, gw))
+		else:
+			var ph := PanelContainer.new()
+			ph.custom_minimum_size = Vector2(gw, gw * 430.0 / 330.0)
+			ph.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#1d2733"), 1, 4, 0))
+			grid.add_child(ph)
+	tb.add_child(grid)
+	row.add_child(tb)
 	var tz := _trade_zone(ME, mini_w * 1.35)
 	tz.custom_minimum_size.x = 250
+	tz.size_flags_horizontal = Control.SIZE_SHRINK_END
 	tz.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(tz)
 	vb.add_child(row)
-	if not ME.table.is_empty():
-		var tr := HBoxContainer.new()
-		tr.add_theme_constant_override("separation", 8)
-		for c in ME.table:
-			tr.add_child(_tex(c.key, mini_w * 1.35))
-		left.add_child(tr)
 	var hv := HandView.new()
 	hv.cw = card_w
 	hv.ch = card_w * 430.0 / 330.0
-	hv.custom_minimum_size = Vector2(0, hv.ch + 36)
+	hv.custom_minimum_size = Vector2(0, hv.ch + 22)
 	hv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var hand: Array = ME.hand.duplicate()
 	hand.sort_custom(func(a, b):
@@ -1327,6 +1390,18 @@ func _action_bar() -> Control:
 	var wrap := VBoxContainer.new()
 	wrap.add_theme_constant_override("separation", 8)
 	if G.over:
+		var ob := HFlowContainer.new()
+		ob.alignment = FlowContainer.ALIGNMENT_CENTER
+		ob.add_theme_constant_override("h_separation", 10)
+		var rs := _btn("Show results", "primary")
+		rs.pressed.connect(_end_modal)
+		ob.add_child(rs)
+		var pa := _btn("Play again")
+		pa.pressed.connect(func():
+			_close_modal(true)
+			_start_game())
+		ob.add_child(pa)
+		wrap.add_child(ob)
 		return wrap
 	var bar := HFlowContainer.new()
 	bar.alignment = FlowContainer.ALIGNMENT_CENTER
@@ -1663,9 +1738,9 @@ func _atk_panel(vb: VBoxContainer, title: String, desc: String) -> HFlowContaine
 
 func _attack_list(vb: VBoxContainer, L: Dictionary) -> void:
 	var info := {
-		"short": ["Short-range strike", "Eliminates a player sitting immediately to your left or right. Shows the Capabilities it needs."],
-		"long": ["Long-range strike", "Eliminates any one player. Shows the Capabilities it needs."],
-		"super": ["Superpower strike", "Eliminates any one player."]}
+		"short": ["Short-range strike", "Eliminates a player sitting immediately to your left or right. Your Short-range card is destroyed."],
+		"long": ["Long-range strike", "Eliminates any one player. Your Long-range card is destroyed (Short-range stays)."],
+		"super": ["Superpower strike", "Eliminates any one player. Costs nothing - a Superpower can strike again and again."]}
 	for a in L.attacks:
 		var fl := _atk_panel(vb, info[a.type][0], info[a.type][1])
 		for tid in a.targets:
@@ -1826,7 +1901,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Your turn: draw or trade")
 	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive - but the other powers [b]remember[/b]: break deals and they will trust you less, trade with you less, and be quicker to threaten or attack you. Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
-	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside.")
+	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent cards leave the game. Only a [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside, with the spent weapons.")
 	_rules_h(vb, "Threats and disarming")
 	_rules_p(vb, "Nuclear powers can use the [b]threat of attack[/b]. In the exchange window, press [b]Threaten...[/b] and name a player you could attack: they must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up. Anyone can also [b]Disarm[/b] on their own at [b]any time[/b], on or off their turn, returning all their Capability cards to the deck. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Nuclear exchanges")
@@ -1864,7 +1939,8 @@ func _end_modal() -> void:
 	else:
 		title = "Stand-down"
 		sub = "%d of %d powers survive." % [alive.size(), G.players.size()]
-	var vb := _open_modal(title, not good, true, false)
+	var vb := _open_modal(title, not good, false, false)
+	_close_btn(vb, "X")      # close to look at the final board; "Show results" brings this back
 	vb.add_child(_lbl("%s  (%d round%s)" % [sub, G.round_no, "" if G.round_no == 1 else "s"], 15, C_MUT, null, true))
 	for p in G.players:
 		var pc := PanelContainer.new()

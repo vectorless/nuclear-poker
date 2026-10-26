@@ -96,4 +96,6 @@ func _batch(np: int, sets: Array) -> int:
 		np, st.games, float(st.turns) / maxf(1.0, st.games), st.maxT, st.last, st.annih, st.cease,
 		float(st.deaths) / maxf(1.0, st.games), kinds.test, kinds.short, kinds.long, kinds.super, kinds.counter,
 		trades.offers, trades.honoured, trades.reneged, trades.threats, trades.gave_in, trades.refused, trades.grudge_hits])
+	if st.games == 0:
+		fails += 1      # nothing ran at all (e.g. the engine failed to compile)
 	return fails

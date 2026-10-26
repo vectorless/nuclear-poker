@@ -14,6 +14,7 @@ func _init() -> void:
 				var g := NPGame.new()
 				g.setup({"seed": seed_i * 31, "players": plist})
 				var me: NPGame.Player = g.players[0]
+				var expected := _total(g)
 				var guard := 0
 				var err := ""
 				while not g.over and guard < 4000:
@@ -36,6 +37,10 @@ func _init() -> void:
 						_human(g, me)
 					else:
 						g.step()
+					var bad := _check(g, expected)
+					if bad != "":
+						err = bad
+						break
 				if not g.over:
 					err = "stuck: phase=%s turn=%d cur=%s queue=%s alive=%d deck=%d debts=%d" % [g.phase, g.turn_no, g.cur().name, str(g.war_queue), g.alive_list().size(), g.deck.size(), g.debts.size()]
 				if err != "":
@@ -43,6 +48,30 @@ func _init() -> void:
 					print("FAIL np=", np, " seed ", seed_i, ": ", err)
 	print("HUMAN SIM ", "OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)
+
+func _total(g: NPGame) -> int:
+	var n := g.deck.size() + g.out.size()
+	for p in g.players:
+		n += p.hand.size() + p.table.size() + p.trade.size()
+	return n
+
+## Card count is constant, and every card in a trade area is either part of the pending
+## prompt or a pledge in `debts` - nothing gets stranded there.
+func _check(g: NPGame, expected: int) -> String:
+	if _total(g) != expected:
+		return "card count drift %d vs %d" % [_total(g), expected]
+	var ok := {}
+	for d in g.debts:
+		ok[int(d.pledge)] = true
+	var pr := g.prompt
+	for k in ["card_id", "x_id", "y_id"]:
+		if pr.has(k):
+			ok[int(pr[k])] = true
+	for p in g.players:
+		for c in p.trade:
+			if not ok.has(int(c.id)):
+				return "stranded card %s in %s's trade area (phase %s, prompt %s)" % [c.key, p.name, g.phase, str(pr.get("type", "-"))]
+	return ""
 
 func _human(g: NPGame, me: NPGame.Player) -> void:
 	var r := g.rng.randf()
