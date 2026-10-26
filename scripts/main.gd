@@ -124,6 +124,7 @@ class HandCard extends Control:
 	var base_y := 0.0
 	var fresh := false
 	var can_drag := false
+	var face: Control = null      # the visual; scaled on hover while the card's hit area stays put
 	var preview: Callable
 	var tw: Tween
 	func _get_drag_data(_at: Vector2) -> Variant:
@@ -141,10 +142,12 @@ class HandCard extends Control:
 		if tw:
 			tw.kill()
 		z_index = 20 if on else 0
-		pivot_offset = Vector2(size.x / 2.0, size.y)      # grow up and out from the bottom edge
+		if face == null:
+			return
+		face.pivot_offset = Vector2(size.x / 2.0, size.y)      # grow up and out from the bottom edge
 		tw = create_tween().set_parallel(true)
-		tw.tween_property(self, "position:y", base_y - (14.0 if on else 0.0), 0.12)
-		tw.tween_property(self, "scale", Vector2.ONE * (1.35 if on else 1.0), 0.12).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(face, "position:y", -14.0 if on else 0.0, 0.12)
+		tw.tween_property(face, "scale", Vector2.ONE * (1.35 if on else 1.0), 0.12).set_trans(Tween.TRANS_SINE)
 	func _gui_input(e: InputEvent) -> void:
 		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			picked.emit(cid, self)
@@ -1561,16 +1564,23 @@ func _me_panel() -> Control:
 		hc.cid = c.id
 		hc.fresh = fresh.has(c.id)
 		hc.custom_minimum_size = Vector2(hv.cw, hv.ch)
+		# the picture lives in `face`, which grows on hover; the card's own (hit) area never changes,
+		# so the edges of the neighbouring cards stay hoverable
+		var face := Control.new()
+		face.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hc.add_child(face)
+		hc.face = face
 		var t := _tex(c.key, hv.cw)
 		t.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		t.tooltip_text = ""
-		hc.add_child(t)
+		face.add_child(t)
 		if c.pub:
 			var mk := _badge("REVEALED", C_AMBER, Color(0, 0, 0, 0.75), Color(0, 0, 0, 0))
 			mk.position = Vector2(4, hv.ch - 24)
 			mk.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			hc.add_child(mk)
+			face.add_child(mk)
 		hc.can_drag = _can_offer() or _answering()
 		hc.preview = _drag_preview.bind(c.key)
 		hc.picked.connect(_card_menu)
@@ -2707,6 +2717,20 @@ func _shots() -> void:
 		_mouse(Vector2(hr2.position.x + 20, minf(hr2.position.y + 30, 705)), false, false, true)
 		await get_tree().create_timer(0.3).timeout
 		await _shot(d + "/1i-hover-hand.png")
+		# move onto the visible edge of each neighbour in turn: each must take over the hover
+		var cards: Array = hcz.get_parent().get_children()
+		var ok_edges := 0
+		for i in range(1, cards.size()):
+			var cr: Rect2 = cards[i].get_global_rect()
+			_mouse(Vector2(cr.position.x + 10, minf(cr.position.y + 40, 705)), false, false, true)
+			await get_tree().create_timer(0.15).timeout
+			var prev: Rect2 = cards[i - 1].get_global_rect()
+			_mouse(Vector2(prev.position.x + 6, minf(prev.position.y + 40, 705)), false, false, true)
+			await get_tree().create_timer(0.15).timeout
+			if cards[i - 1].z_index == 20 and cards[i].z_index == 0:
+				ok_edges += 1
+		print("HOVER EDGES ok ", ok_edges, " / ", cards.size() - 1)
+		await _shot(d + "/1j-hover-edge.png")
 		_mouse(Vector2(640, 20), false, false, true)
 		await get_tree().create_timer(0.2).timeout
 	_toggle_debug()
