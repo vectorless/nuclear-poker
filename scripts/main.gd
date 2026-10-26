@@ -316,15 +316,12 @@ class TableMap extends Control:
 			if not s.alive:
 				col = Color("#58573b")
 			if s.turn and s.alive:
-				draw_circle(p, 19.0, Color(0.95, 0.69, 0.2, 0.35))
-			draw_circle(p, 13.0, col)
+				draw_circle(p, 21.0, Color(0.95, 0.69, 0.2, 0.3))
 			if s.you:
-				draw_arc(p, 16.0, 0.0, TAU, 28, Color("#a3b866"), 2.5, true)
+				draw_arc(p, 18.0, 0.0, TAU, 32, Color("#a3b866"), 2.5, true)
+			_jewel(p, 16.0, col, s.alive, hash(s.name))
 			if s.tested and s.alive:
-				draw_circle(p + Vector2(11.0, -11.0), 4.5, Color("#e9c977"))
-			if not s.alive:
-				draw_line(p + Vector2(-7, -7), p + Vector2(7, 7), Color("#d0604a"), 2.5, true)
-				draw_line(p + Vector2(-7, 7), p + Vector2(7, -7), Color("#d0604a"), 2.5, true)
+				draw_circle(p + Vector2(12.0, -12.0), 4.5, Color("#e9c977"))
 			var txt: String = s.name
 			var fs := 12
 			var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
@@ -337,6 +334,64 @@ class TableMap extends Control:
 			else:
 				lp = Vector2(p.x - 21.0 - w, p.y + 4.0)
 			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#efe5c8") if s.alive else Color("#837d65"))
+
+	## A cut gemstone, cracked: facets shaded from a light at the top left, a chipped edge and a
+	## jagged fracture. An eliminated player's jewel lies shattered in grey shards.
+	func _jewel(p: Vector2, r: float, col: Color, alive: bool, seed_v: int) -> void:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_v
+		var n := 8
+		var rot := rng.randf() * TAU
+		var outer: Array = []
+		var inner: Array = []
+		for k in range(n):
+			var a := rot + TAU * k / n
+			var rr := r * (0.88 + 0.12 * rng.randf())
+			if k == 2:
+				rr *= 0.72      # a chip out of the rim
+			outer.append(Vector2(cos(a), sin(a)) * rr)
+			var a2 := a + PI / n
+			inner.append(Vector2(cos(a2), sin(a2)) * r * 0.48)
+		var base := col if alive else Color("#6b6a55")
+		var light := Vector2(-0.6, -0.8).normalized()
+		var shards := 1 if alive else 4
+		for sh in range(shards):
+			# shattered: each shard is a wedge of facets pushed away from the centre
+			var k0 := sh * n / shards
+			var k1 := (sh + 1) * n / shards
+			var push := Vector2.ZERO
+			if not alive:
+				var mid: Vector2 = (outer[k0] + outer[(k1 - 1) % n]) * 0.5
+				push = mid.normalized() * 4.0 + Vector2(rng.randf() - 0.5, rng.randf() - 0.5) * 2.0
+			for k in range(k0, k1):
+				var o1: Vector2 = outer[k]
+				var o2: Vector2 = outer[(k + 1) % n]
+				var i1: Vector2 = inner[k]
+				var i0: Vector2 = inner[(k - 1 + n) % n]
+				var nrm := ((o1 + o2) * 0.5).normalized()
+				var shade := clampf(0.5 + 0.5 * nrm.dot(light), 0.0, 1.0)
+				var c1 := base.darkened(0.45).lerp(base.lightened(0.35), shade)
+				draw_colored_polygon(PackedVector2Array([p + push + o1, p + push + o2, p + push + i1]), c1)
+				draw_colored_polygon(PackedVector2Array([p + push + o1, p + push + i1, p + push + i0]), c1.darkened(0.15))
+				draw_line(p + push + o1, p + push + o2, base.darkened(0.6), 1.2, true)
+			if alive:
+				var table := PackedVector2Array()
+				for v in inner:
+					table.append(p + v)
+				draw_colored_polygon(table, base.lightened(0.25))
+				draw_polyline(table + PackedVector2Array([table[0]]), base.lightened(0.55), 1.0, true)
+		# the fracture: a jagged line across the stone
+		var a0 := rng.randf() * TAU
+		var start := Vector2(cos(a0), sin(a0)) * r * 0.9
+		var crack := PackedVector2Array([p + start])
+		for j in range(1, 5):
+			var t := j / 4.0
+			var q := start.lerp(-start, t) + Vector2(rng.randf() - 0.5, rng.randf() - 0.5) * r * 0.45
+			crack.append(p + q)
+		draw_polyline(crack, Color(0.08, 0.06, 0.04, 0.9), 1.6, true)
+		draw_polyline(crack, Color(1, 1, 1, 0.25), 0.6, true)
+		if alive:
+			draw_circle(p + Vector2(-r * 0.35, -r * 0.4), r * 0.12, Color(1, 1, 1, 0.75))      # glint
 
 # ====================================================================== style helpers
 func _sb(bg: Color, border := Color(0, 0, 0, 0), bw := 0, radius := 10, pad := 0) -> StyleBoxFlat:
