@@ -57,6 +57,7 @@ var topbar: HBoxContainer
 var board: VBoxContainer
 var map_box: VBoxContainer
 var logbox: RichTextLabel
+var log_edition: Label      # the newspaper's dateline: which round we are in
 var overlay: CanvasLayer
 var modal_root: Control
 var popup_root: Control
@@ -970,9 +971,15 @@ func _build_menu() -> Control:
 		ob.focus_mode = Control.FOCUS_NONE
 		ob.clip_text = true
 		ob.add_item("Random")
+		ob.add_theme_constant_override("icon_max_width", 28)
+		ob.get_popup().add_theme_constant_override("icon_max_width", 32)
 		for pid in ["hawk", "dove", "opp", "wild"]:
 			var pe: Dictionary = NPGame.PERSONAS[pid]
-			ob.add_item("%s - %s" % [pe.name, pe.title])
+			var hp := "res://assets/portraits/%s_head.png" % pid
+			if ResourceLoader.exists(hp):
+				ob.add_icon_item(load(hp), pe.name)
+			else:
+				ob.add_item(pe.name)
 		for st in ["normal", "hover", "pressed"]:
 			ob.add_theme_stylebox_override(st, _sb(C_PANEL2, C_LINE, 1, 8, 9))
 		ob.select(maxi(0, PERSONA_IDS.find(cfg["p%d" % (i + 1)])))
@@ -1073,26 +1080,73 @@ func _build_shell() -> Control:
 	map_box = VBoxContainer.new()
 	sv.add_child(map_box)
 	sv.add_child(HSeparator.new())
-	sv.add_child(_lbl("EVENT LOG", 14, C_AMBER, HEAD))
-	# The log is a strip of teleprinter paper: dark ink on light paper, a plain readable typewriter face.
+	# The log is the front page of a 1940s newspaper: masthead, dateline, and the news in a column
+	# of dark ink on tiled newsprint.
+	var ink := Color("#1f1b14")
+	var sheet := PanelContainer.new()
+	sheet.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var tx := StyleBoxTexture.new()
+	tx.texture = load("res://assets/ui/newsprint.png")
+	tx.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	tx.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	tx.set_content_margin_all(10)
+	tx.content_margin_top = 6
+	sheet.add_theme_stylebox_override("panel", tx)
+	sv.add_child(sheet)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 3)
+	sheet.add_child(col)
+	var mast := _lbl("The Atomic Herald", 30, ink, load("res://fonts/UnifrakturCook-Bold.woff2"))
+	mast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(mast)
+	col.add_child(_rule(ink, 2.0))
+	var dl := HBoxContainer.new()
+	var paper_font: Font = load("res://fonts/OldStandard-Regular.woff2")
+	dl.add_child(_lbl("LATE EDITION", 11, ink, paper_font))
+	dl.add_child(_spacer())
+	log_edition = _lbl("ROUND 1", 11, ink, paper_font)
+	dl.add_child(log_edition)
+	dl.add_child(_spacer())
+	dl.add_child(_lbl("ONE CENT", 11, ink, paper_font))
+	col.add_child(dl)
+	col.add_child(_rule(ink, 1.0))
+	col.add_child(_rule(ink, 1.0, 2))
 	logbox = RichTextLabel.new()
 	logbox.bbcode_enabled = true
 	logbox.scroll_following = true
 	logbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	logbox.custom_minimum_size.y = 120
 	logbox.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	logbox.add_theme_font_override("normal_font", load("res://fonts/CourierPrime-Regular.ttf"))
-	logbox.add_theme_font_override("bold_font", load("res://fonts/CourierPrime-Bold.ttf"))
-	logbox.add_theme_font_size_override("normal_font_size", 14)
-	logbox.add_theme_font_size_override("bold_font_size", 14)
-	logbox.add_theme_constant_override("line_separation", 3)
-	logbox.add_theme_color_override("default_color", Color("#2b241a"))
-	var paper := _sb(Color("#e4d6b0"), Color("#8a7d55"), 1, 6, 10)
-	paper.content_margin_bottom = 14      # room under the last line, so it is never cut off
-	logbox.add_theme_stylebox_override("normal", paper)
-	logbox.add_theme_stylebox_override("focus", paper)
-	sv.add_child(logbox)
+	logbox.add_theme_font_override("normal_font", paper_font)
+	logbox.add_theme_font_override("bold_font", load("res://fonts/OldStandard-Bold.woff2"))
+	logbox.add_theme_font_override("italics_font", load("res://fonts/OldStandard-Italic.woff2"))
+	logbox.add_theme_font_size_override("normal_font_size", 15)
+	logbox.add_theme_font_size_override("bold_font_size", 15)
+	logbox.add_theme_font_size_override("italics_font_size", 15)
+	logbox.add_theme_constant_override("line_separation", 1)
+	logbox.add_theme_constant_override("paragraph_separation", 7)
+	logbox.add_theme_color_override("default_color", ink)
+	var clear := StyleBoxEmpty.new()
+	clear.content_margin_top = 4
+	clear.content_margin_bottom = 12      # room under the last line, so it is never cut off
+	logbox.add_theme_stylebox_override("normal", clear)
+	logbox.add_theme_stylebox_override("focus", clear)
+	col.add_child(logbox)
 	return root
+
+## A printed rule across a newspaper column.
+func _rule(c: Color, h: float, gap := 0) -> Control:
+	var r := ColorRect.new()
+	r.color = c
+	r.custom_minimum_size.y = h
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if gap > 0:
+		var mc := MarginContainer.new()
+		mc.add_theme_constant_override("margin_top", -gap)
+		mc.add_child(r)
+		return mc
+	return r
+
 
 # ====================================================================== start / events
 func _start_game() -> void:
@@ -1260,7 +1314,7 @@ func _render_top() -> void:
 	topbar.add_child(_chip("Round %d" % G.round_no))
 	topbar.add_child(_chip("Deck %d" % G.deck.size()))
 	topbar.add_child(_spacer())
-	if ME.alive and not G.over and not G.caps_held(ME).is_empty():
+	if G.can_disarm(ME):      # only a nuclear power (tested) holding Capabilities
 		var db := _btn("Disarm", "default", 13)
 		db.tooltip_text = "Return all your Capability cards to the deck - allowed at any time."
 		db.pressed.connect(_disarm_modal)
@@ -1691,7 +1745,8 @@ func _me_panel() -> Control:
 	hd.add_theme_constant_override("separation", 8)
 	hd.custom_minimum_size.y = 30
 	hd.add_child(_lbl(ME.name.to_upper(), 20, C_INK, HEAD))
-	hd.add_child(_lbl("You", 12, C_GREEN, MONO))
+	if ME.name.strip_edges().to_lower() != "you":      # a custom callsign still gets the "You" tag
+		hd.add_child(_lbl("You", 12, C_GREEN, MONO))
 	if ME.tested:
 		hd.add_child(_badge("TESTED", Color("#e9c977"), Color("#33290f"), Color("#7a5d18")))
 	if not ME.alive:
@@ -1871,6 +1926,8 @@ func _classic_actions(bar: HFlowContainer) -> void:
 func _render_side() -> void:
 	_clear(map_box)
 	map_box.add_child(_map_panel())
+	if log_edition != null:
+		log_edition.text = "ROUND %d" % G.round_no
 	# ink colours for paper: red for attacks and deaths, dark brass for tests, faded for quiet lines
 	var tones := {"attack": "#9a2414", "death": "#7a1408", "test": "#6b4c00", "reveal": "#5a3d1e", "quiet": "#7d7357", "sys": "#3f4a12"}
 	var added := false
@@ -2228,10 +2285,10 @@ func _threaten_modal() -> void:
 		fl.add_child(b)
 		modal_btns.append({"kind": "threaten", "button": b})
 
-## Voluntary disarmament, available at any time.
+## Voluntary disarmament, available at any time once you have tested.
 func _disarm_modal() -> void:
 	var held := G.caps_held(ME)
-	if held.is_empty():
+	if not G.can_disarm(ME):
 		return
 	var vb := _open_modal("Disarm?", true, false, true)
 	vb.add_child(_rtl("Return [b]all your Capability cards[/b] (%s) to the deck. Your Technologies stay on the table. You will be unable to attack or retaliate until you collect Capabilities again." % ", ".join(held.map(func(c): return NPGame.INFO[c.key].name)), 15, Color("#ddd3b4")))
@@ -2316,7 +2373,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent weapons go to the set-aside pile. A [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see.\n- An eliminated player's hand is turned face up and stays on show in their seat.")
 	_rules_h(vb, "Threats and disarming")
-	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window): name a player you could attack. They must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up.\n- [b]Disarm[/b] (top bar) - at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The AI powers may disarm too, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
+	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window): name a player you could attack. They must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The AI powers may disarm too, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "The table map")
@@ -2684,7 +2741,7 @@ func _autotest() -> void:
 					acts.honour += 1
 				continue
 			# voluntary disarmament, any time
-			if btn.has("disarm") and is_instance_valid(btn.disarm) and randf() < 0.03:
+			if btn.has("disarm") and is_instance_valid(btn.disarm) and not btn.disarm.disabled and randf() < 0.03:
 				btn.disarm.pressed.emit()
 				continue
 			# exchange window
@@ -2929,6 +2986,13 @@ func _shots() -> void:
 	players_opt.get_popup().hide()
 	players_opt.select(2)
 	players_opt.item_selected.emit(2)
+	await get_tree().create_timer(0.2).timeout
+	opp_btns[0].select(1)
+	opp_btns[0].show_popup()
+	await get_tree().create_timer(0.3).timeout
+	await _shot(d + "/0c-menu-opponents.png")
+	opp_btns[0].get_popup().hide()
+	opp_btns[0].select(0)
 	await get_tree().create_timer(0.2).timeout
 	print("PLAYERS label: ", players_opt.text)
 	players_opt.select(0)

@@ -198,7 +198,7 @@ func _condemn(attacker: Player, victim: Player) -> void:
 ## Would AI p lay down its weapons now? Peaceful, cautious characters do when they feel safe and
 ## trust the table - more readily once others have gone first. Hawks almost never do.
 func ai_maybe_disarm(p: Player) -> bool:
-	if p.human or not p.alive or caps_held(p).is_empty() or not prompt.is_empty():
+	if p.human or not can_disarm(p) or not prompt.is_empty():
 		return false
 	var pe := p.persona
 	var B := belief(p)
@@ -829,15 +829,18 @@ func _return_caps(t: Player) -> Array:
 				names.append(INFO[c.key].name)
 	return names
 
-## Voluntary disarmament - allowed at any time, on or off your turn.
-## Voluntary disarmament - allowed at any time, also while a trade or deal is waiting for an answer
-## (only not in the middle of a counter-strike or threat decision, which must be answered first).
+## Voluntary disarmament is open to a declared nuclear power - one that has made its Nuclear Test -
+## holding Capability cards to give up.
+func can_disarm(p: Player) -> bool:
+	return not over and p.alive and p.tested and not caps_held(p).is_empty()
+
+## Voluntary disarmament - after your own Nuclear Test, at any time: on or off your turn, also while a
+## trade or deal is waiting for an answer (only not in the middle of a counter-strike or threat
+## decision, which must be answered first).
 func disarm_caps(p: Player) -> bool:
-	if over or not p.alive:
+	if not can_disarm(p):
 		return false
 	if not prompt.is_empty() and not str(prompt.get("type", "")) in ["trade", "deal"]:
-		return false
-	if caps_held(p).is_empty():
 		return false
 	var names := _return_caps(p)
 	log_msg("%s DISARMS - returns %s to the deck." % [p.name, ", ".join(names)], "reveal")

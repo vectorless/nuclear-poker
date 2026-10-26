@@ -29,6 +29,7 @@ func _batch(np: int, sets: Array) -> int:
 		var g := NPGame.new()
 		var fired := {}
 		var extra_fires: Array = []
+		var untested_disarms: Array = []
 		g.setup({"seed": seed_i * 7919, "players": plist})
 		g.event.connect(func(t, d):
 			if t == "attack":
@@ -57,6 +58,9 @@ func _batch(np: int, sets: Array) -> int:
 					trades.refused += 1
 				elif d.text.contains("DISARMS"):
 					trades.disarmed += 1
+					for q in g.players:
+						if d.text.begins_with(q.name + " DISARMS") and not q.tested:
+							untested_disarms.append(q.name)
 				elif d.text.contains("condemns"):
 					trades.condemned += 1
 				elif d.text.contains("breach of faith"):
@@ -87,6 +91,8 @@ func _batch(np: int, sets: Array) -> int:
 							err = "dead player's hand not revealed"
 			if err == "" and not extra_fires.is_empty():
 				err = "fired twice in one turn without Superpower: " + str(extra_fires[0])
+			if err == "" and not untested_disarms.is_empty():
+				err = "disarmed before testing: " + str(untested_disarms[0])
 			if err == "" and g.debts.size() > np * 2:
 				err = "debts piling up: %d" % g.debts.size()
 			if err != "":
