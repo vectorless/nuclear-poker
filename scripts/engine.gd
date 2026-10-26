@@ -497,7 +497,7 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	x.pub = false      # face down: only p knows what it is
 	p.trade.append(x)
 	trade_tried = true
-	log_msg("%s offers %s a card, face down." % [p.name, t.name])
+	log_msg("%s offers %s a card." % [p.name, t.name])
 	event.emit("trade_offer", {"from": p, "to": t, "c": x})
 	if t.human:
 		prompt = {"type": "trade", "player": t, "from": p, "card_id": x.id}      # no card key: it is face down
@@ -513,7 +513,7 @@ func _place_counter(t: Player, yid: int, p: Player, x: Dictionary) -> void:
 	var y = _take_hand_card(t, yid)
 	y.pub = false
 	t.trade.append(y)
-	log_msg("%s answers with a card of their own, face down." % t.name)
+	log_msg("%s answers with a card of their own." % t.name)
 	event.emit("trade_counter", {"from": t, "to": p, "c": y})
 
 ## The offerer weighs the pair (AI) or is asked (human).

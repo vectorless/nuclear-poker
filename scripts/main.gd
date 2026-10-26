@@ -786,7 +786,7 @@ func _build_menu() -> Control:
 	cols.add_child(right)
 
 	var b1 := _box(left, "Classic rules")
-	b1.add_child(_lbl("The original rules sheet. Each turn you draw a card OR offer a face-down trade - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.", 14, C_MUT, null, true))
+	b1.add_child(_lbl("The original rules sheet. Each turn you draw a card OR offer a trade - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.", 14, C_MUT, null, true))
 
 	var b3 := _box(right, "The table")
 	b3.add_child(_lbl("PLAYERS AT THE TABLE", 12, C_MUT, MONO))
@@ -1267,13 +1267,13 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 		cp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#ddcc98"), 2, 5, 0))
 		if it.mine:
 			var tx := _tex(it.c.key, w)
-			tx.tooltip_text = "Your %s - face down: the others cannot see it. %s" % [NPGame.INFO[it.c.key].name, it.tip]
+			tx.tooltip_text = "Your %s - only you can see it. %s" % [NPGame.INFO[it.c.key].name, it.tip]
 			tx.modulate = Color(1, 1, 1, 0.8)
 			cp.add_child(tx)
 		else:
 			var bk := CardBack.new()
 			bk.custom_minimum_size = Vector2(w, w * 430.0 / 330.0)
-			bk.tooltip_text = "Face down - you will see it when it arrives. " + it.tip
+			bk.tooltip_text = "You will see it when it arrives. " + it.tip
 			cp.add_child(bk)
 		slot.add_child(cp)
 		slots.append(slot)
