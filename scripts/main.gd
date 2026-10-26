@@ -55,7 +55,6 @@ var menu_root: Control
 var game_root: Control
 var topbar: HBoxContainer
 var board: VBoxContainer
-var arsenal: RichTextLabel
 var map_box: VBoxContainer
 var logbox: RichTextLabel
 var overlay: CanvasLayer
@@ -817,11 +816,13 @@ func _build_menu() -> Control:
 		cell.add_child(ob)
 		og.add_child(cell)
 		opp_btns.append(ob)
-	var strip := HFlowContainer.new()
-	strip.add_theme_constant_override("h_separation", 6)
-	strip.add_theme_constant_override("v_separation", 6)
-	for k in ORDER:
-		strip.add_child(_tex(k, 56))
+	# one row per card type: the four Technologies, then the four Capabilities
+	var strip := GridContainer.new()
+	strip.columns = 4
+	strip.add_theme_constant_override("h_separation", 8)
+	strip.add_theme_constant_override("v_separation", 8)
+	for k in NPGame.TECH + NPGame.CAPS:
+		strip.add_child(_tex(k, 64))
 	b1.add_child(strip)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
@@ -902,11 +903,6 @@ func _build_shell() -> Control:
 	var sv := VBoxContainer.new()
 	sv.add_theme_constant_override("separation", 8)
 	side.add_child(sv)
-	arsenal = _rtl("", 13)
-	arsenal.custom_minimum_size.y = 150      # fixed, so the map below does not move
-	arsenal.add_theme_font_override("normal_font", MONO)
-	arsenal.add_theme_font_override("bold_font", MONO)
-	sv.add_child(arsenal)
 	map_box = VBoxContainer.new()
 	sv.add_child(map_box)
 	sv.add_child(HSeparator.new())
@@ -1692,40 +1688,6 @@ func _classic_actions(bar: HFlowContainer) -> void:
 func _render_side() -> void:
 	_clear(map_box)
 	map_box.add_child(_map_panel())
-	var tested := ME.tested
-	var lines: Array = []
-	var tech_bits: Array = []
-	for k in NPGame.TECH:
-		var have := G.holds(ME, k)
-		tech_bits.append("[color=%s]%s %s[/color]" % ["#a3b866" if have else "#837d65", "+" if have else "-", NPGame.INFO[k].name])
-	lines.append("  ".join(tech_bits))
-	var pre := {
-		"short": tested,
-		"long": tested and G.holds(ME, "short"),
-		"counter": tested and G.holds(ME, "short") and G.holds(ME, "long"),
-		"super": tested and G.has_all_caps(ME)}
-	for k in NPGame.CAPS:
-		var have2 := G.holds(ME, k)
-		var col := "#837d65"
-		var mark := "-"
-		if have2 and pre[k]:
-			col = "#a3b866"
-			mark = "armed"
-		elif have2:
-			col = "#d9a73e"
-			mark = "held"
-		lines.append("[color=%s]%s: %s[/color]" % [col, NPGame.INFO[k].name, mark])
-	var need := 0
-	for k in NPGame.TECH:
-		if not G.holds(ME, k):
-			need += 1
-	if tested:
-		lines.append("Nuclear Test done - Capabilities you hold are armed.")
-	elif G.can_test(ME):
-		lines.append("[color=#3ecf8e]You hold all four Technologies - you can perform a Nuclear Test![/color]")
-	else:
-		lines.append("%d Technolog%s short of a Nuclear Test." % [need, "y" if need == 1 else "ies"])
-	arsenal.text = "[color=#f2b134][b]YOUR ARSENAL[/b][/color]\n" + "\n".join(lines)
 	# ink colours for paper: red for attacks and deaths, dark brass for tests, faded for quiet lines
 	var tones := {"attack": "#9a2414", "death": "#7a1408", "test": "#6b4c00", "reveal": "#5a3d1e", "quiet": "#7d7357", "sys": "#3f4a12"}
 	var added := false
