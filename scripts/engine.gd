@@ -1105,15 +1105,15 @@ func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:
 			best = t
 	return best
 
+## How much p would lose by parting with c - wherever c is now (in hand, or already set out in the
+## trade area as an offer or a pledge): a card is spare when p keeps another copy in hand or on the table.
 func usefulness(p: Player, c: Dictionary) -> float:
-	var n := 0
-	for x in p.hand:
-		if x.key == c.key:
-			n += 1
-	for x in p.table:
-		if x.key == c.key:
-			n += 1
-	var dup := n > 1
+	var others := 0
+	for arr in [p.hand, p.table]:
+		for x in arr:
+			if x.key == c.key and x.id != c.id:
+				others += 1
+	var dup := others > 0
 	var k: String = INFO[c.key].kind
 	if k == "tech":
 		return 0.05 if p.tested else (0.25 if dup else 1.0)
