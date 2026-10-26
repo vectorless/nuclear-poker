@@ -27,10 +27,17 @@ func _batch(np: int, sets: Array) -> int:
 		for i in range(np):
 			plist.append({"name": "AI%d" % i, "human": false, "persona": personas[i]})
 		var g := NPGame.new()
+		var fired := {}
+		var extra_fires: Array = []
 		g.setup({"seed": seed_i * 7919, "players": plist})
 		g.event.connect(func(t, d):
 			if t == "attack":
 				kinds[d.type] += 1
+				if d.type != "counter" and not g.is_superpower(d.attacker):
+					var k := "%d:%d" % [d.attacker.id, g.turn_no]
+					fired[k] = int(fired.get(k, 0)) + 1
+					if fired[k] > 1:
+						extra_fires.append(k)
 				if d.target != null and g.grudge(d.attacker, d.target) > 0.2:
 					trades.grudge_hits += 1
 			elif t == "test":
@@ -72,6 +79,8 @@ func _batch(np: int, sets: Array) -> int:
 						err = "tested without 4 tech on table"
 				if not p.alive and not p.hand.is_empty():
 					err = "dead player has hand"
+			if err == "" and not extra_fires.is_empty():
+				err = "fired twice in one turn without Superpower: " + str(extra_fires[0])
 			if err == "" and g.debts.size() > np * 2:
 				err = "debts piling up: %d" % g.debts.size()
 			if err != "":

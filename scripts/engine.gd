@@ -238,10 +238,22 @@ func do_test(p: Player) -> bool:
 	return true
 
 # ---------------------------------------------------------------- attacks
-## Returns [{type, targets:[ids]}].
-func attack_types(p: Player) -> Array:
+## One weapon per turn: a player who is not a Superpower may fire only one attack card in each turn's
+## exchange window. A Superpower may strike again and again.
+var attacked_on: Dictionary = {}      # player id -> turn_no of their last attack
+
+func is_superpower(p: Player) -> bool:
+	return p.tested and has_all_caps(p)
+
+func fired_this_turn(p: Player) -> bool:
+	return int(attacked_on.get(p.id, -1)) == turn_no
+
+## Returns [{type, targets:[ids]}]. `ignore_limit`: what p could fire at all (used for threats).
+func attack_types(p: Player, ignore_limit := false) -> Array:
 	var outl: Array = []
 	if not p.alive or not p.tested:
+		return outl
+	if not ignore_limit and fired_this_turn(p) and not is_superpower(p):
 		return outl
 	if holds(p, "short"):
 		outl.append({"type": "short", "targets": neighbors_of(p).map(func(x): return x.id)})
@@ -293,6 +305,7 @@ func perform_attacks(list: Array) -> void:
 		if tgt != null and tgt.alive:
 			victims[tgt.id] = a.p
 		event.emit("attack", {"attacker": a.p, "type": a.type, "target": tgt})
+		attacked_on[a.p.id] = turn_no
 		_spend_weapon(a.p, a.type)
 	var vs: Array = []
 	for id in victims.keys():
@@ -796,7 +809,7 @@ func war_actor() -> int:
 ## Everyone p could currently attack - a threat is only credible against these.
 func threat_targets(p: Player) -> Array:
 	var ids := {}
-	for av in attack_types(p):
+	for av in attack_types(p, true):
 		for t in av.targets:
 			ids[int(t)] = true
 	var out_ids: Array = ids.keys()
@@ -1051,7 +1064,7 @@ func ceasefire_score(p: Player, proposer: Player) -> float:
 	var pe := p.persona
 	var B := belief(p)
 	var s := 0.55 + 0.45 * float(pe.caution) - 0.45 * float(pe.aggr)
-	var can_strike := not attack_types(p).is_empty()
+	var can_strike := not attack_types(p, true).is_empty()
 	var max_t := 0.0
 	for x in others(p):
 		max_t = maxf(max_t, threat_on(B, x, p))
@@ -1064,7 +1077,7 @@ func ceasefire_score(p: Player, proposer: Player) -> float:
 		s += 0.45 * max_t * float(pe.fear)             # threatened and defenceless: take the deal
 	if p.tested:
 		s -= 0.07 * _caps_count(p)                     # close to a full arsenal
-	var proposer_armed := not attack_types(proposer).is_empty()
+	var proposer_armed := not attack_types(proposer, true).is_empty()
 	if proposer_armed:
 		s += 0.15
 	elif can_strike:
