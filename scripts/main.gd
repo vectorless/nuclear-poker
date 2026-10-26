@@ -1383,6 +1383,15 @@ func _seat(p: NPGame.Player) -> Control:
 	_pass_through(pc)
 	return pc
 
+## While the AIs play, the banner reports the move just made (the latest line of the event log)
+## instead of a generic "thinking...".
+func _last_play() -> String:
+	if G.log_entries.is_empty():
+		return ""
+	var e: Dictionary = G.log_entries.back()
+	var col: String = {"attack": "#e0644e", "death": "#e0644e", "test": "#e9c977"}.get(e.tone, "#efe5c8")
+	return "[color=%s]%s[/color]" % [col, str(e.text).replace("[", "(")]
+
 func _banner() -> Control:
 	var pc := PanelContainer.new()
 	pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1407,20 +1416,20 @@ func _banner() -> Control:
 				text = "[b][color=#f2b134]A trade is due.[/color][/b] You pledged a card to %s. Deliver it - or break the deal." % G.players[G._debts_of(ME)[0].from].name
 				tone = "you"
 			else:
-				text = "%s is deciding whether to honour a trade..." % G.cur().name
+				text = _last_play()
 		elif G.phase == "play":
 			if G.cur() == ME:
 				text = ""      # just the Research button (and drag-to-trade); How to play explains the rest
 				tone = "you"
 			else:
-				text = "%s is thinking..." % G.cur().name
+				text = _last_play()
 		elif wa == ME.id:
 			text = "[b][color=#f2b134]Exchange window.[/color][/b] Declare a Nuclear Test or an Attack - or stand down."
 			tone = "you"
 		elif wa >= 0:
-			text = "Exchange window: %s is deciding..." % G.players[wa].name
+			text = _last_play()
 		else:
-			text = "Nuclear exchanges: nobody has anything to declare."
+			text = _last_play()
 	var bg := C_PANEL2
 	var bd := C_LINE
 	if tone == "you":
@@ -1671,7 +1680,7 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		btn["renege"] = rb
 		bar.add_child(_lbl("%s has already given you their card" % cr.name, 13, C_MUT))
 	elif G.phase == "play" and G.cur() == ME:
-		var rb2 := _btn("Research - draw a card", "primary")
+		var rb2 := _btn("Research", "primary")
 		rb2.disabled = not L.can_research
 		rb2.pressed.connect(_act_research)
 		bar.add_child(rb2)
@@ -1708,8 +1717,7 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		bar.add_child(thb)
 		btn["threaten"] = thb
 		bar.add_child(_lbl("choose one", 13, C_MUT))
-	else:
-		bar.add_child(_lbl("Waiting for the table...", 13, C_MUT))
+
 
 func _render_side() -> void:
 	_clear(map_box)
@@ -2930,5 +2938,13 @@ func _shots() -> void:
 	_render()
 	await get_tree().create_timer(1.6).timeout
 	await _shot(d + "/9-eliminated.png")
+	# while an AI plays, the banner states its move
+	await _stage("4", ["uranium", "short", "warhead"], false)
+	G.turn = 1
+	G.phase = "play"
+	G.trade_offer(G.players[1], G.players[1].hand[0].id, 2)
+	_render()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/10-ai-move.png")
 	print("SHOTS DONE")
 	get_tree().quit(0)
