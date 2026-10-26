@@ -57,6 +57,7 @@ var phase: String = "play"        # honour | play | war | fog
 var debts: Array = []             # classic: {from, to, got} - `to` owes `from` a card on their next turn
 var war_queue: Array = []         # classic: player ids still to declare in this exchange window
 var trade_tried: bool = false     # classic: AI has already made its one trade offer this turn
+var last_threat: Dictionary = {}  # classic: player id -> turn_no of their last threat (AI cooldown)
 var int_checked: bool = false
 var over: bool = false
 var result: Dictionary = {}
@@ -469,8 +470,9 @@ func _void_debts() -> void:
 			return false
 		return not (d.to == turn and by_id(d.to).hand.is_empty()))
 
-## "accepted" | "declined" | "prompt" (a human must answer) | "invalid"
-func trade_offer(p: Player, card_id: int, target_id: int) -> String:
+## `face_up`: the offered card is shown to the whole table (otherwise it is passed face-down).
+## Returns "accepted" | "declined" | "prompt" (a human must answer) | "invalid"
+func trade_offer(p: Player, card_id: int, target_id: int, face_up := false) -> String:
 	if mode != "classic" or phase != "play" or not p.alive or cur() != p or not prompt.is_empty():
 		return "invalid"
 	if target_id < 0 or target_id >= players.size():
@@ -478,19 +480,19 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	var t := by_id(target_id)
 	if t == p or not t.alive:
 		return "invalid"
-	var has := false
+	var card = null
 	for c in p.hand:
 		if c.id == card_id:
-			has = true
-	if not has:
+			card = c
+	if card == null:
 		return "invalid"
 	trade_tried = true
 	if t.human:
-		log_msg("%s offers %s a card in trade." % [p.name, t.name])
-		prompt = {"type": "trade", "player": t, "from": p, "card_id": card_id}
+		log_msg("%s offers %s a %s in trade." % [p.name, t.name, ("face-up " + card_name(card)) if face_up else "face-down card"])
+		prompt = {"type": "trade", "player": t, "from": p, "card_id": card_id, "face_up": face_up, "card_key": card.key}
 		return "prompt"
-	if ai_accept_trade(t, p):
-		_complete_offer(p, t, card_id)
+	if ai_accept_trade(t, p, card if face_up else null):
+		_complete_offer(p, t, card_id, face_up)
 		_after_play()
 		return "accepted"
 	log_msg("%s turns down %s's trade offer." % [t.name, p.name], "quiet")
@@ -504,7 +506,7 @@ func answer_trade(accept: bool) -> bool:
 	var p: Player = pr.from
 	var t: Player = pr.player
 	if accept and p.alive and _take_hand_card_peek(p, int(pr.card_id)):
-		_complete_offer(p, t, int(pr.card_id))
+		_complete_offer(p, t, int(pr.card_id), bool(pr.get("face_up", false)))
 		_after_play()
 	else:
 		log_msg("%s turns down %s's trade offer." % [t.name, p.name], "quiet")
@@ -516,15 +518,15 @@ func _take_hand_card_peek(p: Player, card_id: int) -> bool:
 			return true
 	return false
 
-func _complete_offer(p: Player, t: Player, card_id: int) -> void:
+func _complete_offer(p: Player, t: Player, card_id: int, face_up := false) -> void:
 	var c = _take_hand_card(p, card_id)
-	c.pub = false
+	c.pub = face_up
 	t.hand.append(c)
 	debts.append({"from": p.id, "to": t.id, "got": c.id})
-	log_msg("%s trades a card to %s. %s now owes one back on their next turn." % [p.name, t.name, t.name])
+	log_msg("%s trades a %s to %s. %s owes one back on their next turn." % [p.name, ("face-up " + card_name(c)) if face_up else "face-down card", t.name, t.name])
 	event.emit("give", {"from": p, "to": t, "c": c})
 
-func honour(p: Player, card_id: int) -> bool:
+func honour(p: Player, card_id: int, face_up := false) -> bool:
 	if phase != "honour" or cur() != p:
 		return false
 	var ds := _debts_of(p)
@@ -534,11 +536,11 @@ func honour(p: Player, card_id: int) -> bool:
 	var c = _take_hand_card(p, card_id)
 	if c == null:
 		return false
-	c.pub = false
+	c.pub = face_up
 	var to := by_id(d.from)
 	to.hand.append(c)
 	debts.erase(d)
-	log_msg("%s completes the trade with %s." % [p.name, to.name])
+	log_msg("%s completes the trade with %s (%s)." % [p.name, to.name, ("face-up " + card_name(c)) if face_up else "face-down card"])
 	event.emit("give", {"from": p, "to": to, "c": c})
 	_next_honour()
 	return true
@@ -563,10 +565,24 @@ func _next_honour() -> void:
 func owed_to(p: Player) -> Array:
 	return debts.filter(func(d): return d.from == p.id)
 
-func ai_accept_trade(t: Player, from: Player) -> bool:
+## How much `p` would want this card (mirrors usefulness(), for a card not yet in hand).
+func _gain(p: Player, c: Dictionary) -> float:
+	var dup := holds(p, c.key)
+	var k: String = INFO[c.key].kind
+	if k == "tech":
+		return 0.05 if p.tested else (0.25 if dup else 1.0)
+	if k == "cap":
+		return 0.25 if dup else {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key]
+	return 0.25 if dup else 0.85
+
+## `card` is only passed when it was offered face-up (a face-down card is accepted blind).
+func ai_accept_trade(t: Player, from: Player, card = null) -> bool:
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	return rng.randf() < clampf(float(t.persona.trade) + 0.25 * thr, 0.05, 0.95)
+	var pr := float(t.persona.trade) + 0.25 * thr
+	if card != null:
+		pr += 0.6 * (_gain(t, card) - 0.5)
+	return rng.randf() < clampf(pr, 0.03, 0.95)
 
 func ai_honour(p: Player) -> void:
 	var ds := _debts_of(p)
@@ -578,7 +594,7 @@ func ai_honour(p: Player) -> void:
 			honest *= 0.6
 	if rng.randf() < honest and not p.hand.is_empty():
 		var lu = least_useful(p)
-		honour(p, lu.id)
+		honour(p, lu.id, rng.randf() < float(p.persona.honest) * 0.5)
 	else:
 		renege(p)
 
@@ -601,13 +617,90 @@ func ai_play_classic(p: Player) -> bool:
 		if not deck.is_empty():
 			tries = tries.slice(0, 1)
 		var c = least_useful(p)
+		var up: bool = rng.randf() < float(p.persona.honest) * 0.5
 		for t in tries:
-			var res := trade_offer(p, c.id, t.id)
+			var res := trade_offer(p, c.id, t.id, up)
 			if res == "accepted" or res == "prompt":
 				return true
 	if not deck.is_empty():
 		return play_research(p)
 	return play_skip(p)
+
+## The threatened player decides (human prompt). Refusing changes nothing by itself.
+func answer_threat(comply: bool) -> bool:
+	if prompt.is_empty() or prompt.get("type", "") != "threat":
+		return false
+	var pr := prompt
+	prompt = {}
+	_resolve_threat(pr.from, pr.player, comply)
+	return true
+
+func _resolve_threat(p: Player, t: Player, comply: bool) -> void:
+	var held := caps_held(t)
+	if held.is_empty():
+		log_msg("%s has no Capability cards to give up - the threat is empty." % t.name, "quiet")
+		return
+	if not comply:
+		log_msg("%s REFUSES to disarm." % t.name, "reveal")
+		return
+	var names := _return_caps(t)
+	log_msg("%s gives in and returns %s to the deck." % [t.name, ", ".join(names)], "reveal")
+	event.emit("disarm_all", {"p": t})
+	_rebuild_war_queue((p.id + 1) % players.size())
+
+## Shuffle every Capability card (hand and table) back into the deck. Returns their names.
+func _return_caps(t: Player) -> Array:
+	var names: Array = []
+	for arr in [t.hand, t.table]:
+		for i in range(arr.size() - 1, -1, -1):
+			if INFO[arr[i].key].kind == "cap":
+				var c = arr[i]
+				arr.remove_at(i)
+				c.pub = false
+				deck.insert(rng.randi_range(0, deck.size()), c)
+				names.append(INFO[c.key].name)
+	return names
+
+## Voluntary disarmament - allowed at any time, on or off your turn.
+func disarm_caps(p: Player) -> bool:
+	if mode != "classic" or over or not p.alive or not prompt.is_empty():
+		return false
+	if caps_held(p).is_empty():
+		return false
+	var names := _return_caps(p)
+	log_msg("%s DISARMS - returns %s to the deck." % [p.name, ", ".join(names)], "reveal")
+	event.emit("disarm_all", {"p": p})
+	return true
+
+func ai_comply_threat(t: Player, from: Player) -> bool:
+	var held := caps_held(t)
+	if held.is_empty():
+		return false
+	var pr := float(t.persona.fear) * 0.7 - 0.06 * held.size()
+	if has_all_caps(from):
+		pr += 0.15
+	if can_counter(t):
+		pr -= 0.35
+	return rng.randf() < clampf(pr, 0.05, 0.9)
+
+## An AI power that cannot (or will not) simply attack may lean on a neighbour holding Capabilities.
+func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
+	if int(last_threat.get(p.id, -99)) > turn_no - 4:
+		return {}
+	var best := -1
+	var best_v := 0.0
+	for tid in threat_targets(p):
+		var x := by_id(tid)
+		var expcaps := 0.0
+		for k in CAPS:
+			expcaps += bp(B, x, k)
+		var v := expcaps * (1.0 - 0.8 * revenge_prob(B, x)) * (0.5 + float(p.persona.aggr))
+		if v > best_v:
+			best_v = v
+			best = tid
+	if best >= 0 and best_v > 0.9 and rng.randf() < 0.3 + 0.3 * float(p.persona.aggr):
+		return {"kind": "threat", "target": best}
+	return {}
 
 func _rebuild_war_queue(start_pid: int) -> void:
 	war_queue = []
@@ -629,7 +722,29 @@ func war_actor() -> int:
 		war_queue.pop_front()
 	return -1
 
+## Everyone p could currently attack - a threat is only credible against these.
+func threat_targets(p: Player) -> Array:
+	var ids := {}
+	for av in attack_types(p, false):
+		if av.type == "plague":
+			continue
+		for t in av.targets:
+			ids[int(t)] = true
+	var out_ids: Array = ids.keys()
+	out_ids.sort()
+	return out_ids
+
+func caps_held(x: Player) -> Array:
+	var res: Array = []
+	for arr in [x.hand, x.table]:
+		for c in arr:
+			if INFO[c.key].kind == "cap":
+				res.append(c)
+	return res
+
 func _valid_war(p: Player, c: Dictionary) -> bool:
+	if c.kind == "threat":
+		return mode == "classic" and threat_targets(p).has(int(c.get("target", -1)))
 	if c.kind == "test":
 		return can_test(p)
 	if c.kind == "attack":
@@ -644,8 +759,22 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 	war_queue.pop_front()
 	if c.kind == "pass" or not _valid_war(p, c):
 		return true
+	if c.kind == "threat":
+		var tt := by_id(int(c.target))
+		last_threat[p.id] = turn_no
+		log_msg("%s threatens %s: give up ALL your Capability cards - or else." % [p.name, tt.name], "attack")
+		event.emit("threat", {"from": p, "to": tt})
+		if tt.human:
+			prompt = {"type": "threat", "player": tt, "from": p}
+		else:
+			_resolve_threat(p, tt, ai_comply_threat(tt, p))
+		return true
+	var alive_before := alive_list().size()
 	apply_war(p, c)
-	_rebuild_war_queue((p.id + 1) % players.size())
+	# The round of declarations only starts over if something actually happened (a test, or someone died);
+	# otherwise a harmless repeat (e.g. a Plague that kills nobody) could keep the window open forever.
+	if c.kind == "test" or alive_list().size() < alive_before:
+		_rebuild_war_queue((p.id + 1) % players.size())
 	return true
 
 ## c: {kind: "pass"|"test"|"attack", type?, target?}
@@ -923,6 +1052,10 @@ func ai_war_choice(p: Player, interrupt: bool = false) -> Dictionary:
 				best = {"kind": "attack", "type": o.type, "target": tid}
 	if best != null and best_score > 0.35:
 		return best
+	if mode == "classic" and not interrupt:
+		var th := _ai_threat(p, B)
+		if not th.is_empty():
+			return th
 	return pass_c
 
 func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:

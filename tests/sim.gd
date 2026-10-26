@@ -29,7 +29,7 @@ func _batch(mode: String, np: int, bio: String, sets: Array) -> int:
 	var fails := 0
 	var st := {"games": 0, "turns": 0, "last": 0, "annih": 0, "cease": 0, "maxT": 0, "deaths": 0}
 	var kinds := {"short": 0, "long": 0, "super": 0, "plague": 0, "counter": 0, "test": 0}
-	var trades := {"offers": 0, "honoured": 0, "reneged": 0}
+	var trades := {"offers": 0, "honoured": 0, "reneged": 0, "threats": 0, "gave_in": 0, "refused": 0, "disarmed": 0}
 	for seed_i in range(1, 101):
 		var personas: Array = sets[seed_i % sets.size()]
 		var plist: Array = []
@@ -43,12 +43,20 @@ func _batch(mode: String, np: int, bio: String, sets: Array) -> int:
 			elif t == "test":
 				kinds["test"] += 1
 			elif t == "log":
-				if d.text.contains("trades a card to"):
+				if d.text.contains("owes one back"):
 					trades.offers += 1
 				elif d.text.contains("completes the trade"):
 					trades.honoured += 1
 				elif d.text.contains("does NOT complete"):
-					trades.reneged += 1)
+					trades.reneged += 1
+				elif d.text.contains(" threatens "):
+					trades.threats += 1
+				elif d.text.contains("gives in and returns"):
+					trades.gave_in += 1
+				elif d.text.contains("REFUSES"):
+					trades.refused += 1
+				elif d.text.contains("DISARMS"):
+					trades.disarmed += 1)
 		var expected := _total(g)
 		var guard := 0
 		var err := ""
@@ -97,7 +105,7 @@ func _batch(mode: String, np: int, bio: String, sets: Array) -> int:
 			_: st.cease += 1
 	var extra := ""
 	if mode == "classic":
-		extra = " trades=%d honoured=%d reneged=%d" % [trades.offers, trades.honoured, trades.reneged]
+		extra = " trades=%d honoured=%d reneged=%d threats=%d gave_in=%d refused=%d" % [trades.offers, trades.honoured, trades.reneged, trades.threats, trades.gave_in, trades.refused]
 	print("%s n=%d %s games=%d avgTurns=%.1f max=%d last=%d annih=%d cease/stalemate=%d avgDeaths=%.2f tests=%d short=%d long=%d super=%d plague=%d counter=%d%s" % [
 		mode.rpad(7), np, bio.rpad(5), st.games, float(st.turns) / maxf(1.0, st.games), st.maxT, st.last, st.annih, st.cease,
 		float(st.deaths) / maxf(1.0, st.games), kinds.test, kinds.short, kinds.long, kinds.super, kinds.plague, kinds.counter, extra])

@@ -797,6 +797,11 @@ func _on_event(t: String, d: Dictionary) -> void:
 			_fx("You are eliminated" if d.p == ME else d.p.name + " eliminated", "death")
 			snd("death")
 			_shake()
+		"threat":
+			snd("attack")
+			_toast("%s threatens %s!" % [d.from.name, d.to.name])
+		"disarm_all":
+			snd("click")
 		"draw":
 			if d.p == ME:
 				fresh[d.c.id] = true
@@ -818,6 +823,8 @@ func _pump() -> void:
 	if st == "prompt":
 		if str(G.prompt.get("type", "")) == "trade":
 			_trade_modal()
+		elif str(G.prompt.get("type", "")) == "threat":
+			_threat_modal()
 		else:
 			_counter_modal()
 		return
@@ -1397,9 +1404,20 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		ab.pressed.connect(_attack_modal.bind("turn"))
 		bar.add_child(ab)
 		btn["attack"] = ab
+		var thb := _btn("Threaten...", "danger")
+		thb.disabled = G.threat_targets(ME).is_empty()
+		thb.pressed.connect(_threaten_modal)
+		bar.add_child(thb)
+		btn["threaten"] = thb
 		bar.add_child(_lbl("choose one", 13, C_MUT))
 	else:
 		bar.add_child(_lbl("Waiting for the table...", 13, C_MUT))
+	if not G.caps_held(ME).is_empty():
+		var db := _btn("Disarm", "default", 13)
+		db.tooltip_text = "Return all your Capability cards to the deck - allowed at any time."
+		db.pressed.connect(_disarm_modal)
+		bar.add_child(db)
+		btn["disarm"] = db
 
 func _render_side() -> void:
 	_clear(map_box)
@@ -1557,23 +1575,34 @@ func _card_menu(cid: int, node: Control) -> void:
 	if G.mode == "classic":
 		if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
 			var cr: NPGame.Player = G.players[G._debts_of(ME)[0].from]
-			var hb := _btn("Give to " + cr.name, "primary", 14)
-			hb.pressed.connect(func():
-				G.honour(ME, cid)
-				_after_human())
-			vb.add_child(hb)
-			vb.add_child(_lbl("Completes the trade you agreed to.", 12, C_MUT, null, true))
+			vb.add_child(_lbl("Complete the trade: give this card to %s - face-up (everyone sees it) or face-down." % cr.name, 12, C_MUT, null, true))
+			var hr := HBoxContainer.new()
+			hr.add_theme_constant_override("separation", 6)
+			for fu in [true, false]:
+				var hb := _btn("Face-up" if fu else "Face-down", "primary" if fu else "default", 14)
+				hb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				hb.pressed.connect(func():
+					G.honour(ME, cid, fu)
+					_after_human())
+				hr.add_child(hb)
+			vb.add_child(hr)
 			any = true
 		elif my_play:
-			vb.add_child(_lbl("Offer this card face-down. If they agree they take it now - and owe you one back on their next turn (or deceive you).", 12, C_MUT, null, true))
+			vb.add_child(_lbl("Offer this card in a trade - face-up (everyone sees it) or face-down. If they agree they take it now, and owe you one back on their next turn (or deceive you).", 12, C_MUT, null, true))
 			for o in G.others(ME):
-				var ob := _btn("Offer to " + o.name, "default", 14)
-				ob.pressed.connect(func():
-					var res := G.trade_offer(ME, cid, o.id)
-					if res == "declined":
-						_toast("%s declines your offer." % o.name)
-					_after_human())
-				vb.add_child(ob)
+				vb.add_child(_lbl(o.name.to_upper(), 13, C_INK, HEAD))
+				var orow := HBoxContainer.new()
+				orow.add_theme_constant_override("separation", 6)
+				for fu in [true, false]:
+					var ob := _btn("Face-up" if fu else "Face-down", "default", 13)
+					ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					ob.pressed.connect(func():
+						var res := G.trade_offer(ME, cid, o.id, fu)
+						if res == "declined":
+							_toast("%s declines your offer." % o.name)
+						_after_human())
+					orow.add_child(ob)
+				vb.add_child(orow)
 			any = true
 	elif not c.pub:
 		var rb := _btn("Reveal to everyone", "default", 14)
@@ -1753,7 +1782,13 @@ func _trade_modal() -> void:
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
 	var vb := _open_modal("Trade offer", false, true, false)
-	vb.add_child(_rtl("[b]%s[/b] offers you a face-down card in trade.\n\nAccept, and the card is yours now - but you owe them one card back on your next turn (you may deceive them, as they may deceive you). Decline, and nothing changes." % pr.from.name, 15, Color("#c3ccd6")))
+	var up: bool = bool(pr.get("face_up", false))
+	vb.add_child(_rtl("[b]%s[/b] offers you a %s in trade.\n\nAccept, and the card is yours now - but you owe them one card back on your next turn, face-up or face-down as you choose (you may also deceive them, as they may deceive you). Decline, and nothing changes." % [pr.from.name, ("[b]%s[/b], face-up" % NPGame.INFO[pr.card_key].name) if up else "face-down card"], 15, Color("#c3ccd6")))
+	if up:
+		var cr := HBoxContainer.new()
+		cr.alignment = BoxContainer.ALIGNMENT_CENTER
+		cr.add_child(_tex(str(pr.card_key), 120))
+		vb.add_child(cr)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var y := _btn("Accept", "primary")
@@ -1771,6 +1806,85 @@ func _trade_modal() -> void:
 	vb.add_child(row)
 	modal_btns.append({"kind": "trade_yes", "button": y})
 	modal_btns.append({"kind": "trade_no", "button": n})
+
+## You are being threatened: give up every Capability card, or refuse.
+func _threat_modal() -> void:
+	var pr := G.prompt
+	if pr.is_empty() or not pr.player.human or modal != null:
+		return
+	var held := G.caps_held(ME)
+	var vb := _open_modal("You are threatened", true, true, false)
+	var txt := "[b]%s[/b] threatens you: return [b]all your Capability cards[/b] to the deck, or else." % pr.from.name
+	var reach := []
+	for av in G.attack_types(pr.from, false):
+		if av.type != "plague" and av.targets.has(ME.id):
+			reach.append(av.type)
+	if not reach.is_empty():
+		txt += "\n\nThey [b]can[/b] strike you (%s)." % ", ".join(reach.map(func(r): return {"short": "Short range", "long": "Long range", "super": "Superpower"}[r]))
+	if held.is_empty():
+		txt += "\n\nYou hold no Capability cards, so you have nothing to give up."
+	else:
+		txt += "\n\nYou hold: %s. If you refuse, nothing happens automatically - but they may attack." % ", ".join(held.map(func(c): return NPGame.INFO[c.key].name))
+	vb.add_child(_rtl(txt, 15, Color("#c3ccd6")))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var y := _btn("Give in - disarm", "danger")
+	y.disabled = held.is_empty()
+	y.pressed.connect(func():
+		_close_modal(true)
+		G.answer_threat(true)
+		_after_human())
+	var n := _btn("Refuse", "primary")
+	n.pressed.connect(func():
+		_close_modal(true)
+		G.answer_threat(false)
+		_after_human())
+	row.add_child(y)
+	row.add_child(n)
+	vb.add_child(row)
+	modal_btns.append({"kind": "threat_yes", "button": y})
+	modal_btns.append({"kind": "threat_no", "button": n})
+
+## Pick whom to threaten (only players you could actually attack).
+func _threaten_modal() -> void:
+	var ids := G.threat_targets(ME)
+	if ids.is_empty():
+		_toast("You cannot reach anyone - a threat needs a credible attack.")
+		return
+	var vb := _open_modal("Threaten", true, false, true)
+	_close_btn(vb, "Cancel")
+	vb.add_child(_rtl("Demand that a player returns [b]all their Capability cards[/b] to the deck. Only players you could attack can be threatened. They may give in or refuse - if they refuse nothing happens automatically, so be ready to follow through (or not).", 15, Color("#c3ccd6")))
+	var fl := _atk_panel(vb, "Choose a target", "")
+	for tid in ids:
+		var rel := " (next to you)" if G.neighbors_of(ME).has(G.players[tid]) else " (across the table)"
+		var b := _btn("Threaten " + G.players[tid].name + rel, "danger")
+		b.pressed.connect(func():
+			_close_modal()
+			G.war_declare(ME, {"kind": "threat", "target": tid})
+			_after_human())
+		fl.add_child(b)
+		modal_btns.append({"kind": "threaten", "button": b})
+
+## Voluntary disarmament, available at any time.
+func _disarm_modal() -> void:
+	var held := G.caps_held(ME)
+	if held.is_empty():
+		return
+	var vb := _open_modal("Disarm?", true, false, true)
+	vb.add_child(_rtl("Return [b]all your Capability cards[/b] (%s) to the deck. Your Technologies stay on the table. You will be unable to attack or retaliate until you collect Capabilities again." % ", ".join(held.map(func(c): return NPGame.INFO[c.key].name)), 15, Color("#c3ccd6")))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var y := _btn("Disarm", "danger")
+	y.pressed.connect(func():
+		_close_modal()
+		G.disarm_caps(ME)
+		_after_human())
+	var n := _btn("Keep my weapons")
+	n.pressed.connect(_close_modal)
+	row.add_child(y)
+	row.add_child(n)
+	vb.add_child(row)
+	modal_btns.append({"kind": "disarm_yes", "button": y})
 
 func _counter_modal() -> void:
 	var pr := G.prompt
@@ -1873,9 +1987,11 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Set up")
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: click a card in your hand and offer it [b]face-down[/b] to one other player. If they agree, they take your card [i]now[/i] - but they only give a card back on [i]their[/i] next turn, and they are [b]not obliged[/b] to. Trading partners can deceive! If the offer is turned down you may try another player or draw instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: click a card in your hand and offer it to one other player, [b]face-up or face-down[/b] - your choice. If they agree, they take your card [i]now[/i]. The trade only completes on [i]their[/i] next turn, when they give you a card back - also face-up or face-down, their choice - and they are [b]not obliged[/b] to. Trading partners can deceive! If the offer is turned down you may try another player or draw instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside.")
+	_rules_h(vb, "Threats and disarming")
+	_rules_p(vb, "Nuclear powers can use the [b]threat of attack[/b]. In the exchange window, press [b]Threaten...[/b] and name a player you could attack: they must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up. Anyone can also [b]Disarm[/b] on their own at [b]any time[/b], on or off their turn, returning all their Capability cards to the deck. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Nuclear exchanges")
 	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b]. Here they are declared in [b]order of play[/b] - the sheet's house rule. After every turn, starting with the player who just moved and going clockwise, each player may declare a Nuclear Test or an Attack, or stand down. After any action the round of declarations starts again. You are only asked when you have something to declare.")
 	_rules_h(vb, "The table map")
@@ -2033,16 +2149,23 @@ func _autotest() -> void:
 	await _shot(out_dir + "/menu.png")
 	var runs := [["classic", "off", "3"], ["classic", "off", "4"], ["classic", "2035", "3"], ["classic", "2000", "4"], ["classic", "off", "4"]]
 	var bad := 0
+	for ua in OS.get_cmdline_user_args():
+		if ua.begins_with("--run="):
+			runs = [runs[int(ua.substr(6))]]
 	for run in runs:
 		cfg.mode = run[0]
 		cfg.bio = run[1]
 		cfg.players = run[2]
 		_start_game()
-		var acts := {"research": 0, "offer": 0, "trade_yes": 0, "trade_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0}
+		var acts := {"research": 0, "offer": 0, "trade_yes": 0, "trade_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0, "threat": 0, "threat_yes": 0, "threat_no": 0, "disarm": 0}
 		var iter := 0
 		var shot_taken := false
 		while iter < 6000:
 			iter += 1
+			if "--trace" in OS.get_cmdline_user_args() and G != null:
+				print("T ", iter, " t", G.turn_no, " ", G.phase, " cur=", G.cur().name, " popup=", popup != null, " modal=", modal != null, " paused=", paused, " q=", G.war_queue, " prompt=", G.prompt.get("type", "-"), " btns=", btn.keys())
+			if iter % 500 == 0 and G != null:
+				print("  ..iter ", iter, " turn ", G.turn_no, " phase ", G.phase, " cur ", G.cur().name, " alive ", G.alive_list().size(), " deck ", G.deck.size(), " modal ", modal != null, " prompt ", G.prompt.get("type", "-"), " debts ", G.debts.size(), " paused ", paused, " meAlive ", ME.alive, " queue ", G.war_queue, " tried ", G.trade_tried, " counterq ", G.counter_q.size(), " over ", G.over)
 			await get_tree().create_timer(0.02).timeout
 			if G == null or G.over and modal != null and not modal_btns.is_empty() and modal_btns[0].kind == "again":
 				break
@@ -2063,6 +2186,29 @@ func _autotest() -> void:
 							acts[want] += 1
 					handled = true
 					break
+				if mb.kind == "threat_yes" or mb.kind == "threat_no":
+					var tw := "threat_yes" if randf() < 0.5 else "threat_no"
+					for mb3 in modal_btns:
+						if mb3.kind == tw and not mb3.button.disabled:
+							mb3.button.pressed.emit()
+							acts[tw] += 1
+							break
+					for mb4 in modal_btns:
+						if mb4.kind == "threat_no":
+							mb4.button.pressed.emit()
+							break
+					handled = true
+					break
+				if mb.kind == "threaten":
+					mb.button.pressed.emit()
+					acts.threat += 1
+					handled = true
+					break
+				if mb.kind == "disarm_yes":
+					mb.button.pressed.emit()
+					acts.disarm += 1
+					handled = true
+					break
 				if mb.kind == "launch" and randf() < 0.9:
 					mb.button.pressed.emit()
 					acts.attack += 1
@@ -2073,6 +2219,9 @@ func _autotest() -> void:
 			if popup != null:
 				_close_popup()
 			if not ME.alive or G.over:
+				continue
+			if G.turn_no > 120 and iter % 150 == 0:
+				_act_ceasefire()      # a long standoff: ask the table to stand down
 				continue
 			# honour a trade, or deceive
 			if btn.has("renege") and is_instance_valid(btn.renege):
@@ -2085,13 +2234,20 @@ func _autotest() -> void:
 						hc0.picked.emit(hc0.cid, hc0)
 						await get_tree().process_frame
 						await get_tree().process_frame
-						if _popup_press("GIVE"):
+						if _popup_press("FACE-"):
 							acts.honour += 1
 						else:
 							_close_popup()
 				continue
+			# voluntary disarmament, any time
+			if btn.has("disarm") and is_instance_valid(btn.disarm) and randf() < 0.03:
+				btn.disarm.pressed.emit()
+				continue
 			# exchange window
 			if btn.has("stand") and is_instance_valid(btn.stand):
+				if btn.has("threaten") and not btn.threaten.disabled and randf() < 0.5:
+					btn.threaten.pressed.emit()
+					continue
 				if btn.has("attack") and not btn.attack.disabled:
 					btn.attack.pressed.emit()
 					await get_tree().process_frame
@@ -2124,7 +2280,7 @@ func _autotest() -> void:
 						hc.picked.emit(hc.cid, hc)
 						await get_tree().process_frame
 						await get_tree().process_frame
-						if _popup_press("OFFER"):
+						if _popup_press("FACE-"):
 							acts.offer += 1
 						else:
 							_close_popup()
@@ -2224,7 +2380,7 @@ func _shots() -> void:
 	await _stage("4", "off", ["uranium", "short"], false)
 	G.turn = 1
 	var offered = G.players[1].hand[0]
-	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id}
+	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "face_up": true, "card_key": offered.key}
 	_trade_modal()
 	await get_tree().create_timer(0.5).timeout
 	await _shot(d + "/6-trade-offer.png")
@@ -2236,6 +2392,30 @@ func _shots() -> void:
 	_render()
 	await get_tree().create_timer(0.5).timeout
 	await _shot(d + "/7-honour.png")
+	# a threat against me, my own threat menu, and the disarm confirmation
+	G.debts = []
+	G.turn = 1
+	G.phase = "war"
+	G.prompt = {"type": "threat", "player": ME, "from": G.players[1]}
+	_render()
+	_threat_modal()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/7a-threat.png")
+	_close_modal(true)
+	G.prompt = {}
+	G.do_test(ME)
+	G.turn = 0
+	G.phase = "war"
+	G._rebuild_war_queue(0)
+	_render()
+	_threaten_modal()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/7b-threaten.png")
+	_close_modal(true)
+	_disarm_modal()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/7c-disarm.png")
+	_close_modal(true)
 	_rules_modal()
 	await get_tree().create_timer(0.6).timeout
 	await _shot(d + "/8-rules.png")
