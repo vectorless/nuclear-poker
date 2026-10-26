@@ -6,8 +6,9 @@
     python3 tools/meshy_portraits.py --model nano-banana-2
 
 Key lookup: --key-file PATH, else $MESHY_API_KEY, else .secrets/meshy (in the project, git-ignored),
-else ~/.secrets/meshy. Never commit the key. Output: assets/portraits/<persona>.png (square).
-The game shows a portrait beside each AI's name when the file exists, and a stamped initial otherwise.
+else ~/.secrets/meshy. Never commit the key. Output: assets/portraits/<persona>.png (square), plus
+<persona>_head.png: a head-and-shoulders crop, toned down and vignetted into the panel colour, which the
+game shows beside each AI's name (a stamped initial when it is missing). `--heads` redoes only the crops.
 Style matches the cards: a 1940s field-manual / dossier photograph. Uniforms are inspired by different
 world powers but carry no real flags, insignia or emblems, and depict no real person.
 """
@@ -61,8 +62,34 @@ def req(key, method, url, body=None):
             time.sleep(float(e.headers.get("Retry-After") or 10))
 
 
+# head crop per portrait, as fractions of the image: left, top, right, bottom
+HEAD_BOX = {"hawk": (0.28, 0.10, 0.76, 0.58), "dove": (0.29, 0.13, 0.77, 0.61),
+            "opp": (0.26, 0.12, 0.74, 0.60), "wild": (0.28, 0.12, 0.76, 0.60)}
+
+
+def make_head(name):
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+    src = os.path.join(OUT, name + ".png")
+    if not os.path.exists(src):
+        return
+    im = Image.open(src).convert("RGB")
+    w, h = im.size
+    b = HEAD_BOX.get(name, (0.26, 0.10, 0.74, 0.58))
+    im = im.crop((int(b[0] * w), int(b[1] * h), int(b[2] * w), int(b[3] * h))).resize((256, 256), Image.LANCZOS)
+    im = ImageEnhance.Color(ImageEnhance.Brightness(im).enhance(0.8)).enhance(0.75)
+    mask = Image.new("L", (256, 256), 0)
+    ImageDraw.Draw(mask).ellipse((34, 26, 222, 250), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(30)).point(lambda v: int(70 + 185 * v / 255))
+    Image.composite(im, Image.new("RGB", (256, 256), (30, 32, 22)), mask).save(os.path.join(OUT, name + "_head.png"))
+
+
 def main():
     args = sys.argv[1:]
+    if "--heads" in args:
+        for name in PEOPLE:
+            make_head(name)
+        print("heads done")
+        return
     key = find_key(args)
     force = "--force" in args
     if force:
@@ -88,11 +115,13 @@ def main():
         if t["status"] != "SUCCEEDED" or not t.get("image_urls"):
             print(name, "FAILED", t.get("task_error"))
             continue
-        tmp = path + ".dl"
+        import tempfile
+        tmp = os.path.join(tempfile.gettempdir(), "meshy_%s.dl" % name)      # download outside the project
         urllib.request.urlretrieve(t["image_urls"][0], tmp)
         from PIL import Image
         Image.open(tmp).convert("RGB").resize((512, 512), Image.LANCZOS).save(path)
         os.remove(tmp)
+        make_head(name)
         print(name, "ok", "credits", t.get("consumed_credits"), flush=True)
     print("done - reopen the project in Godot to import the portraits")
 

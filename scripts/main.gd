@@ -276,122 +276,169 @@ class HandView extends Control:
 				t.tween_property(c, "modulate:a", 1.0, 0.25)
 
 class TableMap extends Control:
-	# Seats around the table. Solid amber = neighbours (Short range reaches); dashed = across (Long range only).
+	# A small campaign map: one country per player, in turn order clockwise round an inland sea.
+	# Countries that share a border are neighbours (solid amber - Short range reaches them);
+	# countries across the sea are linked by a dashed line (Long range only).
 	var seats: Array = []     # {name, alive, tested, turn, you, color}
 	var links: Array = []     # [i, j, "short" | "long"]
 	var font: Font
-	func _geom() -> Dictionary:
-		return {"c": size / 2.0, "rx": size.x * 0.5 - 78.0, "ry": size.y * 0.5 - 34.0}
+	const SEA := Color("#131915")
+	const LAND := Color("#4a4631")
+	const COAST := Color("#cdbd8c")
+	const INK := Color("#1c1a12")
+
+	func _wob(a: float, k: float, ph: float) -> float:
+		return 1.0 + k * (0.5 * sin(3.0 * a + 1.3 + ph) + 0.3 * sin(5.0 * a + 0.4 + 2.0 * ph)
+			+ 0.22 * sin(9.0 * a + 2.1 + ph) + 0.12 * sin(16.0 * a + 0.7))
+	func _outer(a: float) -> Vector2:
+		var c := size / 2.0
+		var w := _wob(a, 0.075, 0.0)
+		return c + Vector2(cos(a) * (size.x * 0.5 - 10.0) * w, sin(a) * (size.y * 0.5 - 7.0) * w)
+	func _inner(a: float) -> Vector2:
+		var c := size / 2.0
+		var w := _wob(a, 0.11, 2.4)
+		return c + Vector2(cos(a) * size.x * 0.17 * w, sin(a) * size.y * 0.2 * w)
+	## A border from the sea to the outer coast, gently wandering.
+	func _border(a: float) -> PackedVector2Array:
+		var pa := _inner(a)
+		var pb := _outer(a)
+		var nrm := (pb - pa).orthogonal().normalized()
+		var out := PackedVector2Array()
+		for k in range(1, 8):
+			var t := k / 8.0
+			out.append(pa.lerp(pb, t) + nrm * sin(t * PI * 2.0 + a * 3.0) * 3.0 * sin(t * PI))
+		return out
+	func _seat_angle(i: int, n: int) -> float:
+		return PI / 2.0 + TAU * i / n
+	func _capital(i: int, n: int) -> Vector2:
+		var a := _seat_angle(i, n)
+		return _inner(a).lerp(_outer(a), 0.5)
+
 	func _draw() -> void:
 		var n := seats.size()
 		if n == 0:
 			return
-		var g := _geom()
-		var c: Vector2 = g.c
-		var rx: float = g.rx
-		var ry: float = g.ry
-		var poly := PackedVector2Array()
-		for k in range(48):
-			var a := TAU * k / 48.0
-			poly.append(c + Vector2(cos(a) * (rx + 8.0), sin(a) * (ry + 8.0)))
-		draw_colored_polygon(poly, Color("#191a10"))
-		var closed := poly.duplicate()
-		closed.append(poly[0])
-		draw_polyline(closed, Color("#57573a"), 1.5, true)
+		var c := size / 2.0
+		draw_rect(Rect2(Vector2.ZERO, size), SEA)
+		# graticule over the ocean
+		for k in range(1, 6):
+			var x := size.x * k / 6.0
+			draw_line(Vector2(x, 0), Vector2(x, size.y), Color(0.55, 0.6, 0.5, 0.07), 1.0)
+		for k in range(1, 4):
+			var y := size.y * k / 4.0
+			draw_line(Vector2(0, y), Vector2(size.x, y), Color(0.55, 0.6, 0.5, 0.07), 1.0)
+		# old-map water lines echoing the coasts
+		for r in [1.06, 1.12]:
+			var ring := PackedVector2Array()
+			for k in range(97):
+				var a := TAU * k / 96.0
+				ring.append(c + (_outer(a) - c) * r)
+			draw_polyline(ring, Color(0.8, 0.74, 0.55, 0.16 if r < 1.1 else 0.08), 1.0, true)
+		# countries
+		var steps := 30
+		for i in range(n):
+			var s: Dictionary = seats[i]
+			var a0 := _seat_angle(i, n) - PI / n
+			var a1 := _seat_angle(i, n) + PI / n
+			var poly := PackedVector2Array([_inner(a0)])
+			poly.append_array(_border(a0))
+			for k in range(steps + 1):
+				poly.append(_outer(lerpf(a0, a1, float(k) / steps)))
+			var b1 := _border(a1)
+			b1.reverse()
+			poly.append_array(b1)
+			for k in range(steps + 1):
+				poly.append(_inner(lerpf(a1, a0, float(k) / steps)))
+			var fill: Color = LAND.lerp(s.color, 0.26)
+			if not s.alive:
+				fill = Color("#2a2820")
+			elif s.turn:
+				fill = fill.lightened(0.18)
+			draw_colored_polygon(poly, fill)
+			if not s.alive:
+				_scorch(i, n)
+		# borders
+		for i in range(n):
+			var a := _seat_angle(i, n) - PI / n
+			var b := PackedVector2Array([_inner(a)])
+			b.append_array(_border(a))
+			b.append(_outer(a))
+			for k in range(b.size() - 1):
+				if k % 2 == 0:
+					draw_line(b[k], b[k + 1], Color(0.06, 0.05, 0.03, 0.85), 1.4, true)
+		# coastlines
+		var oc := PackedVector2Array()
+		var ic := PackedVector2Array()
+		for k in range(145):
+			var a := TAU * k / 144.0
+			oc.append(_outer(a))
+			ic.append(_inner(a))
+		draw_polyline(oc, COAST, 1.6, true)
+		draw_polyline(ic, COAST, 1.6, true)
+		var oc2 := PackedVector2Array()
+		for p in oc:
+			oc2.append(c + (p - c) * 0.93)
+		draw_polyline(oc2, Color(0.05, 0.04, 0.02, 0.18), 1.0, true)      # relief inside the coast
+		var ic2 := PackedVector2Array()
+		for p in ic:
+			ic2.append(c + (p - c) * 0.86)
+		draw_polyline(ic2, Color(0.8, 0.74, 0.55, 0.14), 1.0, true)
+		# ranges
 		var pts: Array = []
 		for i in range(n):
-			var th := PI / 2.0 + TAU * i / n
-			pts.append(c + Vector2(cos(th) * rx, sin(th) * ry))
+			pts.append(_capital(i, n))
 		for l in links:
-			var a2: Vector2 = pts[l[0]]
-			var b2: Vector2 = pts[l[1]]
+			var p1: Vector2 = pts[l[0]]
+			var p2: Vector2 = pts[l[1]]
 			if l[2] == "short":
-				draw_line(a2, b2, Color("#d9a73e"), 3.0, true)
+				draw_line(p1, p2, Color(0.85, 0.65, 0.24, 0.9), 2.5, true)
 			else:
-				draw_dashed_line(a2, b2, Color("#b0a684"), 2.0, 6.0, true, true)
+				draw_dashed_line(p1, p2, Color(0.7, 0.66, 0.52, 0.75), 1.6, 5.0, true, true)
+		# capitals and names
 		for i in range(n):
 			var s: Dictionary = seats[i]
 			var p: Vector2 = pts[i]
-			var col: Color = s.color
-			if not s.alive:
-				col = Color("#58573b")
-			if s.turn and s.alive:
-				draw_circle(p, 21.0, Color(0.95, 0.69, 0.2, 0.3))
-			if s.you:
-				draw_arc(p, 18.0, 0.0, TAU, 32, Color("#a3b866"), 2.5, true)
-			_jewel(p, 16.0, col, s.alive, hash(s.name))
-			if s.tested and s.alive:
-				draw_circle(p + Vector2(12.0, -12.0), 4.5, Color("#e9c977"))
+			if s.alive:
+				if s.turn:
+					draw_circle(p, 12.0, Color(0.95, 0.69, 0.2, 0.35))
+				draw_circle(p, 6.5, INK)
+				draw_circle(p, 5.0, s.color)
+				if s.you:
+					draw_arc(p, 9.0, 0.0, TAU, 24, Color("#a3b866"), 1.8, true)
+				if s.tested:
+					_test_mark(p + Vector2(12.0, -11.0))
+			else:
+				var r := 5.0
+				draw_line(p + Vector2(-r, -r), p + Vector2(r, r), Color("#d0604a"), 2.5, true)
+				draw_line(p + Vector2(-r, r), p + Vector2(r, -r), Color("#d0604a"), 2.5, true)
 			var txt: String = s.name
 			var fs := 12
 			var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-			var dir := p - c
-			var lp := Vector2.ZERO
-			if absf(dir.x) < 6.0:
-				lp = Vector2(p.x - w / 2.0, p.y + (29.0 if dir.y > 0.0 else -21.0))
-			elif dir.x > 0.0:
-				lp = Vector2(p.x + 21.0, p.y + 4.0)
-			else:
-				lp = Vector2(p.x - 21.0 - w, p.y + 4.0)
-			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#efe5c8") if s.alive else Color("#837d65"))
+			var lp := Vector2(p.x - w / 2.0, p.y + 20.0)
+			lp.x = clampf(lp.x, 3.0, size.x - w - 3.0)
+			draw_string_outline(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.07, 0.06, 0.04, 0.85))
+			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#f2e8cb") if s.alive else Color("#8d876d"))
 
-	## A cut gemstone, cracked: facets shaded from a light at the top left, a chipped edge and a
-	## jagged fracture. An eliminated player's jewel lies shattered in grey shards.
-	func _jewel(p: Vector2, r: float, col: Color, alive: bool, seed_v: int) -> void:
+	## A tested country carries a small mushroom cloud beside its capital.
+	func _test_mark(p: Vector2) -> void:
+		var y := Color("#e9c977")
+		draw_line(p + Vector2(0, 1), p + Vector2(0, 6), y, 2.0, true)
+		draw_circle(p + Vector2(-2.2, 0), 2.6, y)
+		draw_circle(p + Vector2(2.2, 0), 2.6, y)
+		draw_circle(p + Vector2(0, -1.6), 2.8, y)
+		draw_line(p + Vector2(-3.5, 6.5), p + Vector2(3.5, 6.5), y, 1.5, true)
+
+	## A destroyed country: grey ground pocked with craters.
+	func _scorch(i: int, n: int) -> void:
 		var rng := RandomNumberGenerator.new()
-		rng.seed = seed_v
-		var n := 8
-		var rot := rng.randf() * TAU
-		var outer: Array = []
-		var inner: Array = []
-		for k in range(n):
-			var a := rot + TAU * k / n
-			var rr := r * (0.88 + 0.12 * rng.randf())
-			if k == 2:
-				rr *= 0.72      # a chip out of the rim
-			outer.append(Vector2(cos(a), sin(a)) * rr)
-			var a2 := a + PI / n
-			inner.append(Vector2(cos(a2), sin(a2)) * r * 0.48)
-		var base := col if alive else Color("#6b6a55")
-		var light := Vector2(-0.6, -0.8).normalized()
-		var shards := 1 if alive else 4
-		for sh in range(shards):
-			# shattered: each shard is a wedge of facets pushed away from the centre
-			var k0 := sh * n / shards
-			var k1 := (sh + 1) * n / shards
-			var push := Vector2.ZERO
-			if not alive:
-				var mid: Vector2 = (outer[k0] + outer[(k1 - 1) % n]) * 0.5
-				push = mid.normalized() * 4.0 + Vector2(rng.randf() - 0.5, rng.randf() - 0.5) * 2.0
-			for k in range(k0, k1):
-				var o1: Vector2 = outer[k]
-				var o2: Vector2 = outer[(k + 1) % n]
-				var i1: Vector2 = inner[k]
-				var i0: Vector2 = inner[(k - 1 + n) % n]
-				var nrm := ((o1 + o2) * 0.5).normalized()
-				var shade := clampf(0.5 + 0.5 * nrm.dot(light), 0.0, 1.0)
-				var c1 := base.darkened(0.45).lerp(base.lightened(0.35), shade)
-				draw_colored_polygon(PackedVector2Array([p + push + o1, p + push + o2, p + push + i1]), c1)
-				draw_colored_polygon(PackedVector2Array([p + push + o1, p + push + i1, p + push + i0]), c1.darkened(0.15))
-				draw_line(p + push + o1, p + push + o2, base.darkened(0.6), 1.2, true)
-			if alive:
-				var table := PackedVector2Array()
-				for v in inner:
-					table.append(p + v)
-				draw_colored_polygon(table, base.lightened(0.25))
-				draw_polyline(table + PackedVector2Array([table[0]]), base.lightened(0.55), 1.0, true)
-		# the fracture: a jagged line across the stone
-		var a0 := rng.randf() * TAU
-		var start := Vector2(cos(a0), sin(a0)) * r * 0.9
-		var crack := PackedVector2Array([p + start])
-		for j in range(1, 5):
-			var t := j / 4.0
-			var q := start.lerp(-start, t) + Vector2(rng.randf() - 0.5, rng.randf() - 0.5) * r * 0.45
-			crack.append(p + q)
-		draw_polyline(crack, Color(0.08, 0.06, 0.04, 0.9), 1.6, true)
-		draw_polyline(crack, Color(1, 1, 1, 0.25), 0.6, true)
-		if alive:
-			draw_circle(p + Vector2(-r * 0.35, -r * 0.4), r * 0.12, Color(1, 1, 1, 0.75))      # glint
+		rng.seed = 7919 * (i + 1)
+		var a := _seat_angle(i, n)
+		for k in range(7):
+			var aa := a + (rng.randf() - 0.5) * TAU / n * 0.7
+			var p := _inner(aa).lerp(_outer(aa), 0.2 + 0.6 * rng.randf())
+			var r := 1.5 + 3.0 * rng.randf()
+			draw_circle(p, r, Color(0.08, 0.07, 0.05, 0.8))
+			draw_arc(p, r + 0.8, PI, TAU, 8, Color(0.6, 0.55, 0.42, 0.35), 1.0, true)
 
 # ====================================================================== style helpers
 func _sb(bg: Color, border := Color(0, 0, 0, 0), bw := 0, radius := 10, pad := 0) -> StyleBoxFlat:
@@ -578,11 +625,12 @@ func _spacer() -> Control:
 func _portrait(p: NPGame.Player, s: float) -> Control:
 	var frame := PanelContainer.new()
 	frame.custom_minimum_size = Vector2(s, s)
-	frame.add_theme_stylebox_override("panel", _sb(Color("#e4d6b0"), _persona_color(p), 2, 3, 2))
-	var path := "res://assets/portraits/%s.png" % str(p.persona.get("id", ""))
-	if not p.human and ResourceLoader.exists(path):
+	var tex := _portrait_tex(p)
+	# a thin rule in the player's colour round a photo toned down to sit in the dark panel
+	frame.add_theme_stylebox_override("panel", _sb(Color("#1e2016") if tex != null else Color("#c9bb93"), _persona_color(p).darkened(0.15), 1, 3, 1))
+	if tex != null:
 		var t := TextureRect.new()
-		t.texture = load(path)
+		t.texture = tex
 		t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		t.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
@@ -597,6 +645,13 @@ func _portrait(p: NPGame.Player, s: float) -> Control:
 		frame.add_child(l)
 	frame.tooltip_text = p.name
 	return frame
+
+## An AI's head-shot for its seat (assets/portraits/<persona>_head.png), or null.
+func _portrait_tex(p: NPGame.Player) -> Texture2D:
+	if p.human:
+		return null
+	var path := "res://assets/portraits/%s_head.png" % str(p.persona.get("id", ""))
+	return load(path) if ResourceLoader.exists(path) else null
 
 func _persona_color(p: NPGame.Player) -> Color:
 	return Color(p.persona.color) if not p.persona.is_empty() else C_GREEN
@@ -1600,10 +1655,10 @@ func _map_panel() -> Control:
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 2)
 	pc.add_child(vb)
-	vb.add_child(_lbl("THE TABLE  -  turns go clockwise", 12, C_MUT, MONO))
+	vb.add_child(_lbl("THE MAP  -  turns go clockwise", 12, C_MUT, MONO))
 	var tm := TableMap.new()
 	tm.font = MONO
-	tm.custom_minimum_size = Vector2(296, 176)
+	tm.custom_minimum_size = Vector2(296, 186)
 	var al := G.alive_list()
 	for p in G.players:
 		tm.seats.append({"name": _short_name(p), "alive": p.alive, "tested": p.tested, "turn": G.turn == p.id and not G.over,
@@ -2265,7 +2320,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "The table map")
-	_rules_p(vb, "The map in the side panel shows who sits where. [b]Solid amber[/b] lines join neighbours - Short range reaches them. [b]Dashed[/b] lines join players across the table - only Long range reaches them. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
+	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round an inland sea. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the sea to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 	_rules_h(vb, "Tips")
 	_rules_p(vb, "- Hover over any card to see it larger.\n- Press [b]F9[/b] for a debug view of what the other powers hold and think.")
 
