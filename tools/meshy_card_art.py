@@ -5,11 +5,14 @@
     python3 tools/meshy_card_art.py --style poster            # every card in that style
     python3 tools/meshy_card_art.py --style poster --force long
     python3 tools/ww2_cards.py --art poster                   # build the cards with those pictures
+    python3 tools/meshy_card_art.py --map                     # the side-panel map's painted land and sea
 
 Key lookup: --key-file PATH, else $MESHY_API_KEY, else .secrets/meshy (git-ignored), else ~/.secrets/meshy.
 Output: assets/ww2/art/<style>/<card>.png, a wide picture (16:9). Only the picture comes from Meshy:
 tools/ww2_cards.py sets it into the card's window and prints the title and rules itself, so the text
 stays crisp. Each image costs Meshy credits (nano-banana-pro: about 9).
+--map paints assets/ui/map_land.jpg and map_sea.jpg: the game draws its countries and sea with these
+as textures (the shapes stay the game's own, so borders still follow the seating).
 """
 import json, os, sys, tempfile, time, urllib.error, urllib.request
 
@@ -41,6 +44,18 @@ SUBJECTS = {
     "long": "A tall rocket lifting off from a launch gantry, a column of fire and billowing exhaust.",
     "counter": "A submarine surfacing in a stormy sea at night, a missile hatch open on its deck.",
     "super": "A war-room globe of the world ringed by arcing missile trajectories, a dark command bunker behind it.",
+}
+
+
+MAP_COMMON = ("Seen straight down from above, as painted for a vintage 1940s war-room campaign map in gouache: "
+              "soft painterly brushwork, even flat lighting, the same density everywhere across the image, "
+              "full-bleed: a flat texture filling the entire image edge to edge - not an object, not a sheet of "
+              "paper or a painting lying on a table. No text, no labels, no grid, no borders, no compass, no frame.")
+MAP = {
+    "map_land": "Top-down painted terrain: rolling hills, scattered dark forests, patchwork farmland, thin winding "
+                "rivers and low mountain ridges, in muted olive, ochre, sage and umber. No coastline and no sea.",
+    "map_sea": "Flat top-down painted texture of open sea: deep, dark, muted teal-grey water with stylised hand-painted wave strokes and "
+               "faint ripples, low contrast. No land, no ships, no islands.",
 }
 
 
@@ -89,17 +104,21 @@ def main():
     force = "--force" in args
     if force:
         args.remove("--force")
+    maps = "--map" in args
+    if maps:
+        args.remove("--map")
     if style not in STYLES:
         sys.exit("styles: " + ", ".join(STYLES))
-    out = os.path.join(OUT, style)
+    out = os.path.join(ROOT, "assets", "ui") if maps else os.path.join(OUT, style)
     os.makedirs(out, exist_ok=True)
     jobs = {}
-    for name in args or list(SUBJECTS):          # start them all, then collect
-        path = os.path.join(out, name + ".png")
+    for name in args or list(MAP if maps else SUBJECTS):          # start them all, then collect
+        path = os.path.join(out, name + (".jpg" if maps else ".png"))
         if os.path.exists(path) and not force:
             print(name, "exists")
             continue
-        body = {"ai_model": model, "prompt": SUBJECTS[name] + " " + STYLES[style] + " " + COMMON, "aspect_ratio": "16:9"}
+        prompt = MAP[name] + " " + MAP_COMMON if maps else SUBJECTS[name] + " " + STYLES[style] + " " + COMMON
+        body = {"ai_model": model, "prompt": prompt, "aspect_ratio": "16:9"}
         jobs[name] = req(key, "POST", API, body)["result"]
     from PIL import Image
     for name, tid in jobs.items():
@@ -114,11 +133,16 @@ def main():
         tmp = os.path.join(tempfile.gettempdir(), "meshy_art_%s_%s.dl" % (style, name))      # outside the project
         urllib.request.urlretrieve(t["image_urls"][0], tmp)
         im = Image.open(tmp).convert("RGB")
-        im.thumbnail((1280, 1280), Image.LANCZOS)
-        im.save(os.path.join(out, name + ".png"))
+        if maps:      # a texture for a small panel: 1024 wide is plenty, and a JPEG keeps the web build small
+            im = im.resize((1024, round(im.height * 1024 / im.width)), Image.LANCZOS)
+            im.save(os.path.join(out, name + ".jpg"), quality=86)
+        else:
+            im.thumbnail((1280, 1280), Image.LANCZOS)
+            im.save(os.path.join(out, name + ".png"))
         os.remove(tmp)
         print(name, "ok", "credits", t.get("consumed_credits"), flush=True)
-    print("done - now: python3 tools/ww2_cards.py --art", style)
+    print("done - reopen the project in Godot to import the map" if maps else
+          "done - now: python3 tools/ww2_cards.py --art " + style)
 
 
 if __name__ == "__main__":

@@ -306,6 +306,14 @@ class TableMap extends Control:
 	var links: Array = []     # [i, j, "short" | "long"]
 	var font: Font
 	const SEA := Color("#131915")
+	# painted land and sea (tools/meshy_card_art.py --map), used as textures under the game's own shapes
+	static var land_tex: Texture2D = null
+	static var sea_tex: Texture2D = null
+	func _ready() -> void:
+		if land_tex == null and ResourceLoader.exists("res://assets/ui/map_land.jpg"):
+			land_tex = load("res://assets/ui/map_land.jpg")
+		if sea_tex == null and ResourceLoader.exists("res://assets/ui/map_sea.jpg"):
+			sea_tex = load("res://assets/ui/map_sea.jpg")
 	const LAND := Color("#4a4631")
 	const COAST := Color("#cdbd8c")
 	const INK := Color("#1c1a12")
@@ -343,6 +351,8 @@ class TableMap extends Control:
 			return
 		var c := size / 2.0
 		draw_rect(Rect2(Vector2.ZERO, size), SEA)
+		if sea_tex != null:
+			draw_texture_rect(sea_tex, Rect2(Vector2.ZERO, size), false, Color(0.72, 0.76, 0.74))
 		# graticule over the ocean
 		for k in range(1, 6):
 			var x := size.x * k / 6.0
@@ -377,7 +387,19 @@ class TableMap extends Control:
 				fill = Color("#2a2820")
 			elif s.turn:
 				fill = fill.lightened(0.18)
-			draw_colored_polygon(poly, fill)
+			if land_tex != null:
+				# the painting, washed with the owner's colour (scorched grey once destroyed)
+				var tint: Color = Color(0.92, 0.9, 0.84).lerp(s.color, 0.46)
+				if not s.alive:
+					tint = Color(0.36, 0.34, 0.3)
+				elif s.turn:
+					tint = tint.lightened(0.22)
+				var uvs := PackedVector2Array()
+				for q in poly:
+					uvs.append(q / size)
+				draw_colored_polygon(poly, tint, uvs, land_tex)
+			else:
+				draw_colored_polygon(poly, fill)
 			if not s.alive:
 				_scorch(i, n)
 		# borders
