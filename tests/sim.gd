@@ -20,7 +20,7 @@ func _batch(np: int, sets: Array) -> int:
 	var fails := 0
 	var st := {"games": 0, "turns": 0, "last": 0, "annih": 0, "cease": 0, "maxT": 0, "deaths": 0}
 	var kinds := {"short": 0, "long": 0, "super": 0, "counter": 0, "test": 0}
-	var trades := {"offers": 0, "honoured": 0, "reneged": 0, "threats": 0, "gave_in": 0, "refused": 0, "disarmed": 0}
+	var trades := {"offers": 0, "honoured": 0, "reneged": 0, "threats": 0, "gave_in": 0, "refused": 0, "disarmed": 0, "grudge_hits": 0}
 	for seed_i in range(1, 201):
 		var personas: Array = sets[seed_i % sets.size()]
 		var plist: Array = []
@@ -31,6 +31,8 @@ func _batch(np: int, sets: Array) -> int:
 		g.event.connect(func(t, d):
 			if t == "attack":
 				kinds[d.type] += 1
+				if d.target != null and g.grudge(d.attacker, d.target) > 0.2:
+					trades.grudge_hits += 1
 			elif t == "test":
 				kinds["test"] += 1
 			elif t == "log":
@@ -90,8 +92,8 @@ func _batch(np: int, sets: Array) -> int:
 			"last": st.last += 1
 			"annihilation": st.annih += 1
 			_: st.cease += 1
-	print("classic n=%d games=%d avgTurns=%.1f max=%d last=%d annih=%d cease/stalemate=%d avgDeaths=%.2f tests=%d short=%d long=%d super=%d counter=%d trades=%d honoured=%d reneged=%d threats=%d gave_in=%d refused=%d" % [
+	print("classic n=%d games=%d avgTurns=%.1f max=%d last=%d annih=%d cease/stalemate=%d avgDeaths=%.2f tests=%d short=%d long=%d super=%d counter=%d trades=%d honoured=%d reneged=%d threats=%d gave_in=%d refused=%d grudge_attacks=%d" % [
 		np, st.games, float(st.turns) / maxf(1.0, st.games), st.maxT, st.last, st.annih, st.cease,
 		float(st.deaths) / maxf(1.0, st.games), kinds.test, kinds.short, kinds.long, kinds.super, kinds.counter,
-		trades.offers, trades.honoured, trades.reneged, trades.threats, trades.gave_in, trades.refused])
+		trades.offers, trades.honoured, trades.reneged, trades.threats, trades.gave_in, trades.refused, trades.grudge_hits])
 	return fails

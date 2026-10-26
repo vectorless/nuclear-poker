@@ -932,6 +932,39 @@ func _answer_trade(cid: int) -> void:
 		G.answer_trade(cid)
 		_after_human()
 
+## The trade cards to show in p's trade space: [{c, label, tip}].
+func _trade_items_for(p: NPGame.Player) -> Array:
+	var pr := G.prompt
+	var ptype := str(pr.get("type", ""))
+	var res: Array = []
+	var nm := func(x: NPGame.Player) -> String: return "YOU" if x == ME else x.name.to_upper()
+	for q in G.players:
+		for c in q.trade:
+			var to: NPGame.Player = q
+			var label := ""
+			var tip := "In a trade."
+			if ptype == "trade" and int(c.id) == int(pr.card_id):
+				to = pr.player
+				label = "OFFER FROM " + nm.call(q)
+				tip = "Offered by %s. Answer with a card of your own, or decline." % q.name
+			elif ptype == "deal" and int(c.id) == int(pr.x_id):
+				to = pr.partner
+				label = "OFFER FROM " + nm.call(q)
+				tip = "Offered by %s." % q.name
+			elif ptype == "deal" and int(c.id) == int(pr.y_id):
+				to = pr.player
+				label = "ANSWER FROM " + nm.call(q)
+				tip = "%s's answer - it would arrive on their next turn, and they may break the deal." % q.name
+			else:
+				for d in G.debts:
+					if int(d.pledge) == int(c.id):
+						to = G.players[d.from]
+						label = "PLEDGE FROM " + nm.call(q)
+						tip = "Owed by %s - delivered on their next turn, or the deal is broken." % q.name
+			if to == p:
+				res.append({"c": c, "label": label, "tip": tip})
+	return res
+
 func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	var pc := DropTarget.new()
 	pc.accept = func(_d): return p == ME and _answering()
@@ -949,46 +982,29 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	hdr.add_child(_lbl("TRADE AREA", 11, Color("#9fd2ff"), MONO))
 	hdr.add_child(_spacer())
 	vb.add_child(hdr)
-	# Which cards to show here, and who is offering them. An offer made to YOU is shown in your own
-	# trade area (with the offerer's name), not in the offerer's.
-	var ptype := str(pr.get("type", ""))
-	var offer_to_me: bool = ptype == "trade" and pr.player == ME
-	var cards: Array = []
-	for c in p.trade:
-		if offer_to_me and p == pr.from and int(c.id) == int(pr.card_id):
-			continue
-		cards.append(c)
-	var who := ""
-	if p == ME and offer_to_me:
-		var oc = G._trade_card(pr.from, int(pr.card_id))
-		if oc != null:
-			cards.append(oc)
-		who = "OFFER FROM %s" % pr.from.name.to_upper()
-	elif ptype == "deal" and pr.player == ME and p == ME:
-		who = "YOUR OFFER TO %s" % pr.partner.name.to_upper()
-	elif ptype == "deal" and pr.player == ME and p == pr.partner:
-		who = "%s'S ANSWER TO YOU" % p.name.to_upper()
-	else:
-		for d in G.debts:
-			if int(d.to) == p.id and G._trade_card(p, int(d.pledge)) != null:
-				who = "%s PLEDGED TO %s" % ["YOU" if p == ME else p.name.to_upper(), "YOU" if d.from == ME.id else G.players[d.from].name.to_upper()]
-	if who != "":
-		vb.add_child(_lbl(who, 12, C_AMBER, MONO, true))
+	# Every card in play in a trade is shown in the trade space of the player it is meant FOR,
+	# under the name of the player it comes from: an offer in the target's space, an answer in the
+	# offerer's space, a pledged card in the space of the player it is owed to.
 	var fl := HFlowContainer.new()
-	fl.add_theme_constant_override("h_separation", 6)
-	fl.custom_minimum_size.y = w * 430.0 / 330.0 + 2
-	for c in cards:
-		var tip := "Offered in a trade."
-		for d in G.debts:
-			if int(d.pledge) == int(c.id):
-				tip = "Pledged to %s - delivered on %s next turn (or the deal is broken)." % [G.players[d.from].name, "your" if p == ME else p.name + "'s"]
+	fl.add_theme_constant_override("h_separation", 10)
+	fl.add_theme_constant_override("v_separation", 6)
+	fl.custom_minimum_size.y = w * 430.0 / 330.0 + 18
+	var items := _trade_items_for(p)
+	for it in items:
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 2)
+		var cap := _lbl(it.label, 11, C_AMBER, MONO, true)
+		cap.custom_minimum_size.x = maxf(w, 110.0)
+		col.add_child(cap)
 		var cp := PanelContainer.new()
+		cp.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		cp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), Color("#9fd2ff"), 2, 5, 0))
-		var tx := _tex(c.key, w)
-		tx.tooltip_text = NPGame.INFO[c.key].name + " - " + tip
+		var tx := _tex(it.c.key, w)
+		tx.tooltip_text = NPGame.INFO[it.c.key].name + " - " + it.tip
 		cp.add_child(tx)
-		fl.add_child(cp)
-	if cards.is_empty():
+		col.add_child(cp)
+		fl.add_child(col)
+	if items.is_empty():
 		fl.add_child(_lbl("no offer", 12, C_MUT, MONO))
 	vb.add_child(fl)
 	if mine and str(pr.get("type", "")) == "trade":
@@ -1326,8 +1342,7 @@ func _action_bar() -> Control:
 func _classic_actions(bar: HFlowContainer) -> void:
 	var L := G.legal(ME)
 	if str(G.prompt.get("type", "")) == "trade" or str(G.prompt.get("type", "")) == "deal":
-		bar.add_child(_lbl("Answer the trade in your trade area.", 13, C_MUT))
-		return
+		return      # answered in your trade area; the banner says so
 	if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
 		var dd: Dictionary = G._debts_of(ME)[0]
 		var cr: NPGame.Player = G.players[dd.from]
@@ -1809,7 +1824,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Set up")
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40, 5 players = 48[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive! Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive - but the other powers [b]remember[/b]: break deals and they will trust you less, trade with you less, and be quicker to threaten or attack you. Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside.")
 	_rules_h(vb, "Threats and disarming")
@@ -2250,7 +2265,7 @@ func _dragtest() -> void:
 	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "card_key": offered.key}
 	_render()
 	await get_tree().create_timer(0.5).timeout
-	board_scroll.scroll_vertical = 0
+	board_scroll.scroll_vertical = 10000      # hand in view
 	await get_tree().create_timer(0.3).timeout
 	var src := _first_hand_card()
 	var sr := src.get_global_rect()

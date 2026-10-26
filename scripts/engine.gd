@@ -62,6 +62,12 @@ var prompt: Dictionary = {}       # pending human decision: counter | trade | de
 var counter_q: Array = []
 var next_card_id: int = 1
 var total: Dictionary = {}
+# Hidden trust. trust["v:t"] = how far player v trusts player t (0..1). Never shown in the UI.
+# Breaking a deal costs a lot of trust with the victim and some with everyone who saw it; keeping
+# a deal earns a little back. Low trust makes AIs less willing to deal with you, less honest
+# with you, slower to agree to stand down - and more willing to threaten or attack you.
+const TRUST_START := 0.6
+var trust: Dictionary = {}
 
 # ---------------------------------------------------------------- helpers
 func _shuffle(arr: Array) -> void:
@@ -123,6 +129,33 @@ func log_msg(text: String, tone: String = "info") -> void:
 	var e := {"n": turn_no, "text": text, "tone": tone}
 	log_entries.append(e)
 	event.emit("log", e)
+
+# ---------------------------------------------------------------- trust (hidden)
+func trust_of(viewer: Player, target: Player) -> float:
+	return float(trust.get("%d:%d" % [viewer.id, target.id], TRUST_START))
+
+func _shift_trust(viewer: Player, target: Player, delta: float) -> void:
+	if viewer == target:
+		return
+	trust["%d:%d" % [viewer.id, target.id]] = clampf(trust_of(viewer, target) + delta, 0.0, 1.0)
+
+## A deal was kept (true) or broken (false) by `by`, at the expense of `victim`. Everyone sees it.
+func _deal_outcome(by: Player, victim: Player, kept: bool) -> void:
+	for v in players:
+		if v == by:
+			continue
+		if v == victim:
+			_shift_trust(v, by, 0.12 if kept else -0.45)
+		else:
+			_shift_trust(v, by, 0.04 if kept else -0.15)
+
+## 0 = no grievance; up to ~0.6 for someone who has betrayed this player repeatedly.
+func grudge(viewer: Player, target: Player) -> float:
+	return maxf(0.0, TRUST_START - trust_of(viewer, target))
+
+## Multiplier for how much a promised (deferred) card from `partner` is worth to `viewer`.
+func _pledge_faith(viewer: Player, partner: Player) -> float:
+	return clampf((trust_of(viewer, partner) - 0.1) / (TRUST_START - 0.1), 0.0, 1.15)
 
 # ---------------------------------------------------------------- setup
 ## opts: {seed?, players: [{name, human, persona}]}
@@ -539,6 +572,7 @@ func honour(p: Player) -> bool:
 		to.hand.append(y)
 		log_msg("%s DELIVERS %s to %s - the trade is complete." % [p.name, card_name(y), to.name])
 		event.emit("give", {"from": p, "to": to, "c": y})
+		_deal_outcome(p, to, true)
 	_next_honour()
 	return true
 
@@ -553,6 +587,7 @@ func renege(p: Player) -> bool:
 	debts.erase(d)
 	_recall(p, int(d.pledge))
 	log_msg("%s BREAKS the deal with %s - %s is kept. Deceived!" % [p.name, by_id(d.from).name, "the pledged card"], "reveal")
+	_deal_outcome(p, by_id(d.from), false)
 	_next_honour()
 	return true
 
@@ -576,7 +611,7 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 		return -1
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_gain(t, x) - 0.5)
+	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from)
 	if rng.randf() >= clampf(pr, 0.03, 0.95):
 		return -1
 	var y = least_useful(t)
@@ -584,7 +619,7 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 
 ## AI judging a face-up pair: its own card against the one it would receive.
 func ai_accept_pair(p: Player, t: Player, x: Dictionary, y: Dictionary) -> bool:
-	var pr := 0.5 + 0.9 * (_gain(p, y) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
+	var pr := 0.5 + 0.9 * (_gain(p, y) * _pledge_faith(p, t) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
 	return rng.randf() < clampf(pr, 0.05, 0.95)
 
 func ai_honour(p: Player) -> void:
@@ -592,6 +627,8 @@ func ai_honour(p: Player) -> void:
 	if ds.is_empty():
 		return
 	var honest := float(p.persona.honest)
+	var creditor := by_id(int(ds[0].from))
+	honest *= clampf(0.4 + trust_of(p, creditor), 0.3, 1.0)      # less honest with those who cheated before
 	var y = _trade_card(p, int(ds[0].pledge))
 	if y != null and usefulness(p, y) > 0.85:
 		honest *= 0.6
@@ -613,7 +650,9 @@ func ai_play_classic(p: Player) -> bool:
 	if want:
 		var keyed: Array = []
 		for o in others(p):
-			keyed.append({"o": o, "k": threat_on(B, o, p) + _noise(p) * 0.3})
+			if trust_of(p, o) < 0.25:
+				continue      # will not deal with a known cheat
+			keyed.append({"o": o, "k": threat_on(B, o, p) + _noise(p) * 0.3 - 0.8 * (trust_of(p, o) - TRUST_START)})
 		keyed.sort_custom(func(a, b): return a.k < b.k)
 		var tries: Array = keyed.map(func(e): return e.o)
 		if not deck.is_empty():
@@ -679,7 +718,7 @@ func ai_comply_threat(t: Player, from: Player) -> bool:
 	var held := caps_held(t)
 	if held.is_empty():
 		return false
-	var pr := float(t.persona.fear) * 0.7 - 0.06 * held.size()
+	var pr := float(t.persona.fear) * 0.7 - 0.06 * held.size() - 0.5 * grudge(t, from)      # won't bow to a cheat
 	if has_all_caps(from):
 		pr += 0.15
 	if can_counter(t):
@@ -697,7 +736,7 @@ func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 		var expcaps := 0.0
 		for k in CAPS:
 			expcaps += bp(B, x, k)
-		var v := expcaps * (1.0 - 0.8 * revenge_prob(B, x)) * (0.5 + float(p.persona.aggr))
+		var v := expcaps * (1.0 - 0.8 * revenge_prob(B, x)) * (0.5 + float(p.persona.aggr) + grudge(p, x))
 		if v > best_v:
 			best_v = v
 			best = tid
@@ -872,6 +911,7 @@ func score_nuke(B: Dictionary, p: Player, x: Player) -> float:
 	var rev := revenge_prob(B, x)
 	var al := alive_list()
 	var s: float = float(pe.fear) * t + float(pe.aggr) * 0.6 - float(pe.caution) * 1.5 * rev + (0.35 if al.size() == 2 else 0.0)
+	s += (0.5 + 0.5 * float(pe.aggr)) * grudge(p, x)      # betrayal breeds hostility
 	if al.size() >= 3:
 		for y in others(p):
 			if y == x:
@@ -920,7 +960,7 @@ func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:
 	var best: Player = targets[0]
 	var best_s := -99.0
 	for t in targets:
-		var s: float = (1.0 if t.tested else 0.0) + bp(B, t, "short") * 0.5
+		var s: float = (1.0 if t.tested else 0.0) + bp(B, t, "short") * 0.5 + grudge(p, t)
 		if s > best_s:
 			best_s = s
 			best = t
@@ -953,7 +993,9 @@ func least_useful(p: Player):
 			best = c
 	return best
 
-func _ai_agrees_ceasefire(p: Player) -> bool:
+func _ai_agrees_ceasefire(p: Player, proposer: Player) -> bool:
+	if rng.randf() < grudge(p, proposer):
+		return false      # "Why would we believe you?"
 	var B := belief(p)
 	var opts := attack_types(p)
 	if not opts.is_empty() and float(p.persona.aggr) > 0.45 and rng.randf() < 0.7:
@@ -971,7 +1013,7 @@ func propose_ceasefire(proposer: Player) -> Dictionary:
 	for p in others(proposer):
 		if p.human:
 			agrees.append(p)
-		elif _ai_agrees_ceasefire(p):
+		elif _ai_agrees_ceasefire(p, proposer):
 			agrees.append(p)
 		else:
 			refuses.append(p)
