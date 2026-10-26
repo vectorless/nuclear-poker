@@ -435,6 +435,7 @@ func _load_cfg() -> void:
 			cfg[k] = cf.get_value("s", k, cfg[k])
 		muted = bool(cf.get_value("s", "muted", false))
 	cfg.mode = "classic"          # the other WAR modes are locked for now
+	cfg.bio = "off"              # Biowar expansions are locked for now
 	cfg.players = "4" if str(cfg.players) == "4" else "3"
 
 func _save_cfg() -> void:
@@ -555,8 +556,8 @@ func _build_menu() -> Control:
 	_opt(b1, "mode", "fast", "Fast WAR", "Locked for now.", true)
 	var b2 := _box(left, "Biowar expansion")
 	_opt(b2, "bio", "off", "Off", "Standard nuclear game.")
-	_opt(b2, "bio", "2000", "2000", "Labs and Plague cards join the deck. Plague needs a Nuclear Test + all 4 Capabilities first.")
-	_opt(b2, "bio", "2035", "2035", "Biotech is cheap: just show Labs and have Plague. Everyone without Labs dies. Brutal.")
+	_opt(b2, "bio", "2000", "2000", "Locked for now.", true)
+	_opt(b2, "bio", "2035", "2035", "Locked for now.", true)
 
 	var b3 := _box(right, "The table")
 	b3.add_child(_lbl("PLAYERS AT THE TABLE", 12, C_MUT, MONO))
