@@ -69,6 +69,7 @@ var modal_pause := false
 var modal_sticky := false
 var popup: Control = null
 var me_zone: Control = null
+var seat_zones := {}          # player id -> that seat's trade space (a drop target)
 var board_scroll: ScrollContainer = null
 var name_edit: LineEdit
 var opp_btns: Array = []
@@ -149,21 +150,34 @@ class DragSrc extends Control:
 		return {"cid": cid}
 
 class DropTarget extends PanelContainer:
-	## Accepts a dragged card when `accept` allows it; glows while a card is being dragged that fits.
+	## Accepts a dragged card when `accept` allows it. Only the target under the pointer lights up.
 	var accept: Callable
 	var on_drop: Callable
+	var hot := false
+	var _normal: StyleBox
+	func _set_hot(on: bool) -> void:
+		if on == hot:
+			return
+		hot = on
+		if on:
+			_normal = get_theme_stylebox("panel")
+			var sb := (_normal.duplicate() if _normal is StyleBoxFlat else StyleBoxFlat.new()) as StyleBoxFlat
+			sb.border_color = Color("#e9c977")
+			sb.set_border_width_all(3)
+			sb.bg_color = sb.bg_color.lightened(0.12)
+			add_theme_stylebox_override("panel", sb)
+		elif _normal != null:
+			add_theme_stylebox_override("panel", _normal)
 	func _can_drop_data(_at: Vector2, data: Variant) -> bool:
-		return data is Dictionary and data.has("cid") and accept.is_valid() and accept.call(data)
+		var ok: bool = data is Dictionary and data.has("cid") and accept.is_valid() and accept.call(data)
+		_set_hot(ok)
+		return ok
 	func _drop_data(_at: Vector2, data: Variant) -> void:
-		modulate = Color.WHITE
+		_set_hot(false)
 		on_drop.call(data)
 	func _notification(what: int) -> void:
-		if what == NOTIFICATION_DRAG_BEGIN:
-			var d = get_viewport().gui_get_drag_data()
-			if d is Dictionary and d.has("cid") and accept.is_valid() and accept.call(d):
-				modulate = Color(1.25, 1.2, 0.9)
-		elif what == NOTIFICATION_DRAG_END:
-			modulate = Color.WHITE
+		if what == NOTIFICATION_DRAG_END or what == NOTIFICATION_MOUSE_EXIT:
+			_set_hot(false)
 
 class CardStrip extends Control:
 	## A fixed-height row of cards that never wraps or grows: when there are too many
@@ -935,6 +949,7 @@ func _render_top() -> void:
 func _render_board() -> void:
 	_clear(board)
 	btn.clear()
+	seat_zones.clear()
 	var vw := get_viewport_rect().size.x
 	card_w = clampf(vw * 0.062, 72.0, 112.0)
 	mini_w = clampf(vw * (0.031 if G.players.size() < 5 else 0.027), 32.0, 56.0)
@@ -1009,11 +1024,17 @@ func _trade_items_for(p: NPGame.Player) -> Array:
 	return res
 
 func _trade_zone(p: NPGame.Player, w: float) -> Control:
+	# Drop a card here: on another player's trade space to offer it to them,
+	# on your own to answer an offer made to you.
 	var pc := DropTarget.new()
-	pc.accept = func(_d): return p == ME and _answering()
-	pc.on_drop = func(d): _answer_trade(int(d.cid))
 	if p == ME:
+		pc.accept = func(_d): return _answering()
+		pc.on_drop = func(d): _answer_trade(int(d.cid))
 		me_zone = pc
+	else:
+		pc.accept = func(_d): return _can_offer() and p.alive
+		pc.on_drop = func(d): _drop_offer(p, d)
+		seat_zones[p.id] = pc
 	pc.add_theme_stylebox_override("panel", _sb(Color("#1d1e13e6"), Color("#6e6743"), 1, 8, 6))
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 3)
@@ -1096,9 +1117,7 @@ func _mini_pub(key: String) -> Control:
 
 func _seat(p: NPGame.Player) -> Control:
 	var turn: bool = G.turn == p.id and not G.over and p.alive
-	var pc := DropTarget.new()
-	pc.accept = func(_d): return _can_offer() and p != ME and p.alive
-	pc.on_drop = func(d): _drop_offer(p, d)
+	var pc := PanelContainer.new()
 	pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pc.add_theme_stylebox_override("panel", _sb(C_PANEL, C_AMBER if turn else C_LINE, 2 if turn else 1, 12, 10))
 	var vb := VBoxContainer.new()
@@ -2302,6 +2321,8 @@ func _mouse(pos: Vector2, pressed := false, button := false, motion := false, he
 		mb.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
 		Input.parse_input_event(mb)
 
+var drag_lit := -1      # drag test: how many drop targets were lit just before release
+
 func _drag(from: Vector2, to: Vector2) -> void:
 	_mouse(from, false, false, true)
 	await get_tree().process_frame
@@ -2311,6 +2332,12 @@ func _drag(from: Vector2, to: Vector2) -> void:
 		_mouse(from.lerp(to, i / 10.0), false, false, true, true)
 		await get_tree().process_frame
 	await get_tree().create_timer(0.15).timeout
+	drag_lit = 0
+	for n in get_tree().root.find_children("*", "", true, false):
+		if n is DropTarget and n.hot:
+			drag_lit += 1
+	if "--dragtest" in OS.get_cmdline_user_args():
+		await _shot("/tmp/gshots2/drag-hover.png")
 	_mouse(to, false, true)
 	await get_tree().create_timer(0.3).timeout
 
@@ -2322,14 +2349,7 @@ func _dragtest() -> void:
 	G.phase = "play"
 	_render()
 	await get_tree().create_timer(0.4).timeout
-	var seat1: Control = null
-	for n in board.find_children("*", "Control", true, false):
-		if n is DropTarget:
-			var txt := ""
-			for l in n.find_children("*", "Label", true, false):
-				txt += l.text
-			if "VOLKOV" in txt:
-				seat1 = n
+	var seat1: Control = seat_zones.get(1, null)
 	var hc := _first_hand_card()
 	print("DRAGTEST seat=", seat1 != null, " card=", hc != null, " can_drag=", hc.can_drag if hc else null)
 	var before := ME.trade.size()
@@ -2338,6 +2358,9 @@ func _dragtest() -> void:
 	var hr := hc.get_global_rect()
 	await _drag(Vector2(hr.position.x + hr.size.x / 2.0, minf(hr.position.y + 30.0, 705.0)), seat1.get_global_rect().get_center())
 	await _shot("/tmp/gshots2/drag-after.png")
+	if drag_lit != 1:
+		fails += 1
+		print("DRAGTEST FAIL: %d targets lit while hovering one trade space" % drag_lit)
 	print("DRAGTEST offer: trade ", before, "->", ME.trade.size(), " hand ", hand_before, "->", ME.hand.size(), " prompt=", G.prompt.get("type", "-"), " modal=", modal != null, " toast/declined ok")
 	if G.log_entries.size() == log_before:
 		fails += 1
