@@ -24,10 +24,10 @@ const INFO := {
 }
 
 const PERSONAS := {
-	"hawk": {"id": "hawk", "name": "General Volkov", "title": "The Hawk", "aggr": 0.80, "fear": 0.50, "caution": 0.20, "gift": 0.04, "reveal": 0.04, "noise": 0.10, "react": [0.9, 2.4], "color": "#d9534f"},
-	"dove": {"id": "dove", "name": "Dr. Okafor", "title": "The Deterrer", "aggr": 0.22, "fear": 0.95, "caution": 0.85, "gift": 0.10, "reveal": 0.55, "noise": 0.08, "react": [1.6, 3.6], "color": "#4aa3df"},
-	"opp": {"id": "opp", "name": "Ambassador Lin", "title": "The Opportunist", "aggr": 0.50, "fear": 0.75, "caution": 0.50, "gift": 0.10, "reveal": 0.20, "noise": 0.10, "react": [1.2, 3.0], "color": "#e0a526"},
-	"wild": {"id": "wild", "name": "President Reyes", "title": "The Wildcard", "aggr": 0.55, "fear": 0.40, "caution": 0.10, "gift": 0.22, "reveal": 0.30, "noise": 0.35, "react": [0.8, 3.4], "color": "#9b6bd1"},
+	"hawk": {"id": "hawk", "name": "General Volkov", "title": "The Hawk", "trade": 0.35, "honest": 0.45, "aggr": 0.80, "fear": 0.50, "caution": 0.20, "gift": 0.04, "reveal": 0.04, "noise": 0.10, "react": [0.9, 2.4], "color": "#d9534f"},
+	"dove": {"id": "dove", "name": "Dr. Okafor", "title": "The Deterrer", "trade": 0.70, "honest": 0.85, "aggr": 0.22, "fear": 0.95, "caution": 0.85, "gift": 0.10, "reveal": 0.55, "noise": 0.08, "react": [1.6, 3.6], "color": "#4aa3df"},
+	"opp": {"id": "opp", "name": "Ambassador Lin", "title": "The Opportunist", "trade": 0.55, "honest": 0.65, "aggr": 0.50, "fear": 0.75, "caution": 0.50, "gift": 0.10, "reveal": 0.20, "noise": 0.10, "react": [1.2, 3.0], "color": "#e0a526"},
+	"wild": {"id": "wild", "name": "President Reyes", "title": "The Wildcard", "trade": 0.60, "honest": 0.40, "aggr": 0.55, "fear": 0.40, "caution": 0.10, "gift": 0.22, "reveal": 0.30, "noise": 0.35, "react": [0.8, 3.4], "color": "#9b6bd1"},
 }
 
 class Player:
@@ -44,7 +44,7 @@ class Player:
 	var eliminated_turn: int = -1
 
 var rng := RandomNumberGenerator.new()
-var mode: String = "slow"          # slow | fog | fast
+var mode: String = "slow"          # classic | slow | fog | fast
 var bio: String = "off"           # off | 2000 | 2035
 var players: Array = []
 var deck: Array = []              # draw from the END of the array
@@ -53,7 +53,10 @@ var log_entries: Array = []
 var turn: int = 0
 var turn_no: int = 1
 var round_no: int = 1
-var phase: String = "play"        # play | war | fog
+var phase: String = "play"        # honour | play | war | fog
+var debts: Array = []             # classic: {from, to, got} - `to` owes `from` a card on their next turn
+var war_queue: Array = []         # classic: player ids still to declare in this exchange window
+var trade_tried: bool = false     # classic: AI has already made its one trade offer this turn
 var int_checked: bool = false
 var over: bool = false
 var result: Dictionary = {}
@@ -178,6 +181,8 @@ func _take_hand_card(p: Player, card_id: int):
 	return null
 
 func proliferate(p: Player, card_id: int, target_id: int) -> bool:
+	if mode == "classic":
+		return false
 	var t := by_id(target_id)
 	if t == null or not t.alive or t == p:
 		return false
@@ -191,6 +196,8 @@ func proliferate(p: Player, card_id: int, target_id: int) -> bool:
 	return true
 
 func disarm(p: Player, card_id: int) -> bool:
+	if mode == "classic":
+		return false
 	var c = _take_hand_card(p, card_id)
 	if c == null:
 		return false
@@ -201,6 +208,8 @@ func disarm(p: Player, card_id: int) -> bool:
 	return true
 
 func reveal(p: Player, card_id: int) -> bool:
+	if mode == "classic":
+		return false
 	for c in p.hand:
 		if c.id == card_id:
 			if c.pub:
@@ -246,7 +255,7 @@ func attack_types(p: Player, interrupt: bool = false) -> Array:
 	if not p.alive:
 		return outl
 	var allow := func(t: String) -> bool:
-		return (not interrupt) or mode == "fast" or t == "super"
+		return (not interrupt) or mode == "fast" or mode == "classic" or t == "super"
 	var nuc := p.tested
 	if nuc and holds(p, "short") and allow.call("short"):
 		outl.append({"type": "short", "targets": neighbors_of(p).map(func(x): return x.id)})
@@ -394,6 +403,12 @@ func end_turn() -> void:
 	turn = i
 	turn_no += 1
 	phase = "play"
+	trade_tried = false
+	war_queue = []
+	if mode == "classic":
+		_void_debts()
+		if not _debts_of(cur()).is_empty():
+			phase = "honour"
 	int_checked = false
 	fog_active = false
 	fog_choices = {}
@@ -406,7 +421,10 @@ func end_turn() -> void:
 func _after_play() -> void:
 	if over:
 		return
-	if mode == "slow":
+	if mode == "classic":
+		phase = "war"
+		_rebuild_war_queue(turn)
+	elif mode == "slow":
 		phase = "war"
 	elif mode == "fog":
 		begin_fog()
@@ -434,6 +452,200 @@ func play_disarm(p: Player, card_id: int) -> bool:
 func play_skip(p: Player) -> bool:
 	log_msg("%s has no legal play action and skips." % p.name)
 	_after_play()
+	return true
+
+
+# ---------------------------------------------------------------- classic rules
+# Draw OR trade each turn. A trade is a face-down card offered to one player; if they agree the card
+# changes hands at once, and they owe one back - but only when their own turn comes, and they may
+# DECEIVE. After each turn there is an exchange window: starting with the player who just played and
+# going clockwise, anyone may test or attack ("nuclear exchanges in order of play" house rule).
+func _debts_of(p: Player) -> Array:
+	return debts.filter(func(d): return d.to == p.id)
+
+func _void_debts() -> void:
+	debts = debts.filter(func(d):
+		if not by_id(d.from).alive or not by_id(d.to).alive:
+			return false
+		return not (d.to == turn and by_id(d.to).hand.is_empty()))
+
+## "accepted" | "declined" | "prompt" (a human must answer) | "invalid"
+func trade_offer(p: Player, card_id: int, target_id: int) -> String:
+	if mode != "classic" or phase != "play" or not p.alive or cur() != p or not prompt.is_empty():
+		return "invalid"
+	if target_id < 0 or target_id >= players.size():
+		return "invalid"
+	var t := by_id(target_id)
+	if t == p or not t.alive:
+		return "invalid"
+	var has := false
+	for c in p.hand:
+		if c.id == card_id:
+			has = true
+	if not has:
+		return "invalid"
+	trade_tried = true
+	if t.human:
+		log_msg("%s offers %s a card in trade." % [p.name, t.name])
+		prompt = {"type": "trade", "player": t, "from": p, "card_id": card_id}
+		return "prompt"
+	if ai_accept_trade(t, p):
+		_complete_offer(p, t, card_id)
+		_after_play()
+		return "accepted"
+	log_msg("%s turns down %s's trade offer." % [t.name, p.name], "quiet")
+	return "declined"
+
+func answer_trade(accept: bool) -> bool:
+	if prompt.is_empty() or prompt.get("type", "") != "trade":
+		return false
+	var pr := prompt
+	prompt = {}
+	var p: Player = pr.from
+	var t: Player = pr.player
+	if accept and p.alive and _take_hand_card_peek(p, int(pr.card_id)):
+		_complete_offer(p, t, int(pr.card_id))
+		_after_play()
+	else:
+		log_msg("%s turns down %s's trade offer." % [t.name, p.name], "quiet")
+	return true
+
+func _take_hand_card_peek(p: Player, card_id: int) -> bool:
+	for c in p.hand:
+		if c.id == card_id:
+			return true
+	return false
+
+func _complete_offer(p: Player, t: Player, card_id: int) -> void:
+	var c = _take_hand_card(p, card_id)
+	c.pub = false
+	t.hand.append(c)
+	debts.append({"from": p.id, "to": t.id, "got": c.id})
+	log_msg("%s trades a card to %s. %s now owes one back on their next turn." % [p.name, t.name, t.name])
+	event.emit("give", {"from": p, "to": t, "c": c})
+
+func honour(p: Player, card_id: int) -> bool:
+	if phase != "honour" or cur() != p:
+		return false
+	var ds := _debts_of(p)
+	if ds.is_empty():
+		return false
+	var d: Dictionary = ds[0]
+	var c = _take_hand_card(p, card_id)
+	if c == null:
+		return false
+	c.pub = false
+	var to := by_id(d.from)
+	to.hand.append(c)
+	debts.erase(d)
+	log_msg("%s completes the trade with %s." % [p.name, to.name])
+	event.emit("give", {"from": p, "to": to, "c": c})
+	_next_honour()
+	return true
+
+func renege(p: Player) -> bool:
+	if phase != "honour" or cur() != p:
+		return false
+	var ds := _debts_of(p)
+	if ds.is_empty():
+		return false
+	var d: Dictionary = ds[0]
+	debts.erase(d)
+	log_msg("%s does NOT complete the trade with %s - deceived!" % [p.name, by_id(d.from).name], "reveal")
+	_next_honour()
+	return true
+
+func _next_honour() -> void:
+	_void_debts()
+	if _debts_of(cur()).is_empty():
+		phase = "play"
+
+func owed_to(p: Player) -> Array:
+	return debts.filter(func(d): return d.from == p.id)
+
+func ai_accept_trade(t: Player, from: Player) -> bool:
+	var B := belief(t)
+	var thr := threat_on(B, from, t)
+	return rng.randf() < clampf(float(t.persona.trade) + 0.25 * thr, 0.05, 0.95)
+
+func ai_honour(p: Player) -> void:
+	var ds := _debts_of(p)
+	if ds.is_empty():
+		return
+	var honest := float(p.persona.honest)
+	for c in p.hand:
+		if c.id == ds[0].got and usefulness(p, c) > 0.85:
+			honest *= 0.6
+	if rng.randf() < honest and not p.hand.is_empty():
+		var lu = least_useful(p)
+		honour(p, lu.id)
+	else:
+		renege(p)
+
+func ai_play_classic(p: Player) -> bool:
+	var B := belief(p)
+	var want := false
+	if not trade_tried and p.hand.size() >= 1:
+		if deck.is_empty():
+			want = true
+		elif p.hand.size() >= 3:
+			var lu = least_useful(p)
+			if lu != null and usefulness(p, lu) < 0.5 and rng.randf() < float(p.persona.trade) * 0.8:
+				want = true
+	if want:
+		var keyed: Array = []
+		for o in others(p):
+			keyed.append({"o": o, "k": threat_on(B, o, p) + _noise(p) * 0.3})
+		keyed.sort_custom(func(a, b): return a.k < b.k)
+		var tries: Array = keyed.map(func(e): return e.o)
+		if not deck.is_empty():
+			tries = tries.slice(0, 1)
+		var c = least_useful(p)
+		for t in tries:
+			var res := trade_offer(p, c.id, t.id)
+			if res == "accepted" or res == "prompt":
+				return true
+	if not deck.is_empty():
+		return play_research(p)
+	return play_skip(p)
+
+func _rebuild_war_queue(start_pid: int) -> void:
+	war_queue = []
+	var n := players.size()
+	for k in range(n):
+		var pl: Player = players[(start_pid + k) % n]
+		if pl.alive:
+			war_queue.append(pl.id)
+
+func war_options(p: Player) -> bool:
+	return p.alive and (can_test(p) or not attack_types(p, false).is_empty())
+
+## Next player in the exchange window with something to declare, or -1 when the window is over.
+func war_actor() -> int:
+	while not war_queue.is_empty():
+		var p := by_id(war_queue[0])
+		if war_options(p):
+			return p.id
+		war_queue.pop_front()
+	return -1
+
+func _valid_war(p: Player, c: Dictionary) -> bool:
+	if c.kind == "test":
+		return can_test(p)
+	if c.kind == "attack":
+		for av in attack_types(p, false):
+			if av.type == c.type and (c.type == "plague" or av.targets.has(int(c.get("target", -1)))):
+				return true
+	return false
+
+func war_declare(p: Player, c: Dictionary) -> bool:
+	if phase != "war" or mode != "classic" or war_queue.is_empty() or war_queue[0] != p.id or not prompt.is_empty():
+		return false
+	war_queue.pop_front()
+	if c.kind == "pass" or not _valid_war(p, c):
+		return true
+	apply_war(p, c)
+	_rebuild_war_queue((p.id + 1) % players.size())
 	return true
 
 ## c: {kind: "pass"|"test"|"attack", type?, target?}
@@ -476,7 +688,7 @@ func instant(p: Player, c: Dictionary, interrupt: bool = true) -> bool:
 
 func run_interrupts() -> bool:
 	var acted := false
-	if mode == "fast":
+	if mode == "fast" or mode == "classic":
 		return false
 	for p in alive_list():
 		if p.human or over:
@@ -769,6 +981,8 @@ func maybe_reveal(p: Player) -> void:
 		reveal(p, cands[0].id)
 
 func ai_play(p: Player) -> bool:
+	if mode == "classic":
+		return ai_play_classic(p)
 	var pe := p.persona
 	maybe_reveal(p)
 	var r := rng.randf()
@@ -842,6 +1056,12 @@ func status() -> String:
 	if not prompt.is_empty():
 		return "prompt"
 	# The player whose turn it is may have been eliminated mid-turn (interrupt, Fast attack, Plague).
+	if mode == "classic" and phase == "war":
+		var a := war_actor()
+		if a < 0:
+			end_turn()
+			return status()
+		return "human" if by_id(a).human else "ai"
 	if phase != "fog" and not cur().alive:
 		end_turn()
 		return status()
@@ -862,11 +1082,18 @@ func step() -> String:
 	var s := status()
 	if s == "over" or s == "prompt" or s == "human":
 		return s
-	if phase == "play":
+	if phase == "honour":
+		ai_honour(cur())
+	elif phase == "play":
 		var p := cur()
 		if p.human:
 			return "human"
 		ai_play(p)
+	elif mode == "classic" and phase == "war":
+		var a := war_actor()
+		if a >= 0:
+			var ap := by_id(a)
+			war_declare(ap, ai_war_choice(ap, false))
 	elif phase == "war":
 		var p2 := cur()
 		apply_war(p2, ai_war_choice(p2, false))
@@ -885,4 +1112,5 @@ func legal(p: Player, interrupt: bool = false) -> Dictionary:
 		"attacks": attack_types(p, interrupt),
 		"can_peek": mode == "fast" and p.alive and p.tested and has_all_caps(p),
 		"can_counter": can_counter(p),
+		"trade_targets": others(p).map(func(x): return x.id) if mode == "classic" and not p.hand.is_empty() else [],
 	}

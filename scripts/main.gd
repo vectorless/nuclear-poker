@@ -14,7 +14,7 @@ const C_RED := Color("#e5483f")
 const C_GREEN := Color("#3ecf8e")
 
 const ORDER := ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super", "labs", "plague"]
-const DELAY := {"slow": 1.05, "fog": 0.95, "fast": 1.25}
+const DELAY := {"classic": 1.0, "slow": 1.05, "fog": 0.95, "fast": 1.25}
 const PERSONA_IDS := ["random", "hawk", "dove", "opp", "wild"]
 const CARD_DESC := {
 	"uranium": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
@@ -33,7 +33,7 @@ var HEAD: Font
 var MONO: Font
 var TEX := {}
 
-var cfg := {"name": "You", "mode": "slow", "bio": "off", "p1": "random", "p2": "random"}
+var cfg := {"name": "You", "mode": "classic", "bio": "off", "players": "3", "p1": "random", "p2": "random", "p3": "random", "fullscreen": false}
 var G: NPGame = null
 var ME: NPGame.Player = null
 
@@ -60,6 +60,7 @@ var game_root: Control
 var topbar: HBoxContainer
 var board: VBoxContainer
 var arsenal: RichTextLabel
+var map_box: VBoxContainer
 var logbox: RichTextLabel
 var overlay: CanvasLayer
 var modal_root: Control
@@ -73,6 +74,8 @@ var modal_sticky := false
 var popup: Control = null
 var name_edit: LineEdit
 var opp_btns: Array = []
+var opp_lbls: Array = []
+var players_opt: OptionButton
 var sounds := {}
 
 # ====================================================================== custom controls
@@ -183,6 +186,69 @@ class HandView extends Control:
 				var t := c.create_tween().set_parallel(true)
 				t.tween_property(c, "position:y", 28.0, 0.35)
 				t.tween_property(c, "modulate:a", 1.0, 0.25)
+
+class TableMap extends Control:
+	# Seats around the table. Solid amber = neighbours (Short range reaches); dashed = across (Long range only).
+	var seats: Array = []     # {name, alive, tested, turn, you, color}
+	var links: Array = []     # [i, j, "short" | "long"]
+	var font: Font
+	func _geom() -> Dictionary:
+		return {"c": size / 2.0, "rx": size.x * 0.5 - 78.0, "ry": size.y * 0.5 - 34.0}
+	func _draw() -> void:
+		var n := seats.size()
+		if n == 0:
+			return
+		var g := _geom()
+		var c: Vector2 = g.c
+		var rx: float = g.rx
+		var ry: float = g.ry
+		var poly := PackedVector2Array()
+		for k in range(48):
+			var a := TAU * k / 48.0
+			poly.append(c + Vector2(cos(a) * (rx + 8.0), sin(a) * (ry + 8.0)))
+		draw_colored_polygon(poly, Color("#10151b"))
+		var closed := poly.duplicate()
+		closed.append(poly[0])
+		draw_polyline(closed, Color("#2a3644"), 1.5, true)
+		var pts: Array = []
+		for i in range(n):
+			var th := PI / 2.0 + TAU * i / n
+			pts.append(c + Vector2(cos(th) * rx, sin(th) * ry))
+		for l in links:
+			var a2: Vector2 = pts[l[0]]
+			var b2: Vector2 = pts[l[1]]
+			if l[2] == "short":
+				draw_line(a2, b2, Color("#f2b134"), 3.0, true)
+			else:
+				draw_dashed_line(a2, b2, Color("#8c9aab"), 2.0, 6.0, true, true)
+		for i in range(n):
+			var s: Dictionary = seats[i]
+			var p: Vector2 = pts[i]
+			var col: Color = s.color
+			if not s.alive:
+				col = Color("#3a4350")
+			if s.turn and s.alive:
+				draw_circle(p, 19.0, Color(0.95, 0.69, 0.2, 0.35))
+			draw_circle(p, 13.0, col)
+			if s.you:
+				draw_arc(p, 16.0, 0.0, TAU, 28, Color("#3ecf8e"), 2.5, true)
+			if s.tested and s.alive:
+				draw_circle(p + Vector2(11.0, -11.0), 4.5, Color("#ffd37a"))
+			if not s.alive:
+				draw_line(p + Vector2(-7, -7), p + Vector2(7, 7), Color("#ff6a60"), 2.5, true)
+				draw_line(p + Vector2(-7, 7), p + Vector2(7, -7), Color("#ff6a60"), 2.5, true)
+			var txt: String = s.name
+			var fs := 12
+			var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			var dir := p - c
+			var lp := Vector2.ZERO
+			if absf(dir.x) < 6.0:
+				lp = Vector2(p.x - w / 2.0, p.y + (29.0 if dir.y > 0.0 else -21.0))
+			elif dir.x > 0.0:
+				lp = Vector2(p.x + 21.0, p.y + 4.0)
+			else:
+				lp = Vector2(p.x - 21.0 - w, p.y + 4.0)
+			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#e9eef3") if s.alive else Color("#667587"))
 
 # ====================================================================== style helpers
 func _sb(bg: Color, border := Color(0, 0, 0, 0), bw := 0, radius := 10, pad := 0) -> StyleBoxFlat:
@@ -335,6 +401,8 @@ func _ready() -> void:
 	for k in ORDER:
 		TEX[k] = load("res://assets/%s.png" % k)
 	_load_cfg()
+	if bool(cfg.fullscreen) and not OS.has_feature("web") and DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	_build_sounds()
 	var bg := ColorRect.new()
 	bg.color = C_BG
@@ -366,6 +434,8 @@ func _load_cfg() -> void:
 		for k in cfg.keys():
 			cfg[k] = cf.get_value("s", k, cfg[k])
 		muted = bool(cf.get_value("s", "muted", false))
+	cfg.mode = "classic"          # the other WAR modes are locked for now
+	cfg.players = "4" if str(cfg.players) == "4" else "3"
 
 func _save_cfg() -> void:
 	var cf := ConfigFile.new()
@@ -463,7 +533,7 @@ func _build_menu() -> Control:
 	logo.add_child(_lbl("NUCLEAR", 58, C_INK, HEAD))
 	logo.add_child(_lbl("POKER", 58, C_AMBER, HEAD))
 	col.add_child(logo)
-	col.add_child(_lbl("a fun, scary teaching game  ·  you vs. two AI powers", 14, C_MUT, MONO))
+	col.add_child(_lbl("a fun, scary teaching game  ·  you vs. two or three AI powers", 14, C_MUT, MONO))
 
 	var cols := HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 20)
@@ -477,16 +547,30 @@ func _build_menu() -> Control:
 	cols.add_child(left)
 	cols.add_child(right)
 
-	var b1 := _box(left, "WAR rules - the rhythm of the game")
-	_opt(b1, "mode", "slow", "Slow", "Take turns. After your play action you may do a Nuclear Test or an Attack. The basic game - start here.")
-	_opt(b1, "mode", "fog", "Fog", "After each turn everyone secretly writes down an order (test / attack a named player). All resolve at once. Expect mutual destruction.")
-	_opt(b1, "mode", "fast", "Fast", "Real time. Anyone may Test or Attack at any moment - the AIs will not wait for you. Superpower lets you pause and peek at hands.")
+	var b1 := _box(left, "Rules")
+	opt_nodes.clear()
+	_opt(b1, "mode", "classic", "Classic", "The original rules sheet. Each turn you draw a card OR offer a trade - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.")
+	_opt(b1, "mode", "slow", "Slow WAR", "Locked for now.", true)
+	_opt(b1, "mode", "fog", "Fog WAR", "Locked for now.", true)
+	_opt(b1, "mode", "fast", "Fast WAR", "Locked for now.", true)
 	var b2 := _box(left, "Biowar expansion")
 	_opt(b2, "bio", "off", "Off", "Standard nuclear game.")
 	_opt(b2, "bio", "2000", "2000", "Labs and Plague cards join the deck. Plague needs a Nuclear Test + all 4 Capabilities first.")
 	_opt(b2, "bio", "2035", "2035", "Biotech is cheap: just show Labs and have Plague. Everyone without Labs dies. Brutal.")
 
 	var b3 := _box(right, "The table")
+	b3.add_child(_lbl("PLAYERS AT THE TABLE", 12, C_MUT, MONO))
+	players_opt = OptionButton.new()
+	players_opt.focus_mode = Control.FOCUS_NONE
+	players_opt.add_item("3 players - you and two AI powers")
+	players_opt.add_item("4 players - you and three AI powers")
+	for st0 in ["normal", "hover", "pressed"]:
+		players_opt.add_theme_stylebox_override(st0, _sb(C_PANEL2, C_LINE, 1, 8, 9))
+	players_opt.select(1 if str(cfg.players) == "4" else 0)
+	players_opt.item_selected.connect(func(i):
+		cfg.players = "4" if i == 1 else "3"
+		_refresh_opts())
+	b3.add_child(players_opt)
 	b3.add_child(_lbl("YOUR CALLSIGN", 12, C_MUT, MONO))
 	name_edit = LineEdit.new()
 	name_edit.text = str(cfg.name)
@@ -495,8 +579,11 @@ func _build_menu() -> Control:
 	name_edit.add_theme_stylebox_override("focus", _sb(C_PANEL2, C_AMBER, 1, 8, 9))
 	b3.add_child(name_edit)
 	opp_btns.clear()
-	for i in range(2):
-		b3.add_child(_lbl("OPPONENT %d" % (i + 1), 12, C_MUT, MONO))
+	opp_lbls.clear()
+	for i in range(3):
+		var ol := _lbl("OPPONENT %d" % (i + 1), 12, C_MUT, MONO)
+		b3.add_child(ol)
+		opp_lbls.append(ol)
 		var ob := OptionButton.new()
 		ob.focus_mode = Control.FOCUS_NONE
 		ob.add_item("Random")
@@ -516,6 +603,10 @@ func _build_menu() -> Control:
 	var how := _btn("How to play")
 	how.pressed.connect(_rules_modal)
 	row.add_child(how)
+	var fsm := _btn(_fs_label())
+	fsm.pressed.connect(_toggle_fullscreen)
+	row.add_child(fsm)
+	btn["fs_menu"] = fsm
 	var spc := Control.new()
 	spc.custom_minimum_size = Vector2(0, 8)
 	b3.add_child(spc)
@@ -534,10 +625,10 @@ func _build_menu() -> Control:
 	_refresh_opts()
 	return root
 
-func _opt(parent: Control, group: String, value: String, title: String, desc: String) -> void:
+func _opt(parent: Control, group: String, value: String, title: String, desc: String, locked := false) -> void:
 	var pc := PanelContainer.new()
 	pc.mouse_filter = Control.MOUSE_FILTER_STOP
-	pc.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	pc.mouse_default_cursor_shape = Control.CURSOR_FORBIDDEN if locked else Control.CURSOR_POINTING_HAND
 	var hb := HBoxContainer.new()
 	hb.add_theme_constant_override("separation", 10)
 	hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -549,33 +640,43 @@ func _opt(parent: Control, group: String, value: String, title: String, desc: St
 	var vb := VBoxContainer.new()
 	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var t := _lbl(title.to_upper(), 18, C_INK, HEAD)
+	var t := _lbl(title.to_upper() + ("  -  LOCKED" if locked else ""), 18, Color("#667587") if locked else C_INK, HEAD)
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var d := _lbl(desc, 13, C_MUT, null, true)
+	var d := _lbl(desc, 13, Color("#556070") if locked else C_MUT, null, true)
 	d.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(t)
 	vb.add_child(d)
 	hb.add_child(vb)
 	pc.add_child(hb)
 	pc.gui_input.connect(func(e):
+		if locked:
+			return
 		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			cfg[group] = value
 			_refresh_opts())
 	parent.add_child(pc)
-	opt_nodes.append({"group": group, "value": value, "panel": pc, "dot": dot})
+	if locked:
+		dot.visible = false
+	opt_nodes.append({"group": group, "value": value, "panel": pc, "dot": dot, "locked": locked})
 
 func _refresh_opts() -> void:
 	for o in opt_nodes:
-		var sel: bool = cfg[o.group] == o.value
-		var s := _sb(Color("#241f12") if sel else C_PANEL2, C_AMBER if sel else C_LINE, 1, 10, 10)
+		var sel: bool = cfg[o.group] == o.value and not o.locked
+		var s := _sb(Color("#241f12") if sel else (C_BG2 if o.locked else C_PANEL2), C_AMBER if sel else (Color("#1c2530") if o.locked else C_LINE), 1, 10, 10)
 		o.panel.add_theme_stylebox_override("panel", s)
 		o.dot.on = sel
 		o.dot.queue_redraw()
+	var four := str(cfg.players) == "4"
+	if opp_btns.size() > 2:
+		opp_btns[2].visible = four
+		opp_lbls[2].visible = four
 
 func _on_begin() -> void:
 	cfg.name = name_edit.text.strip_edges().left(18) if name_edit.text.strip_edges() != "" else "You"
 	cfg.p1 = PERSONA_IDS[opp_btns[0].selected]
 	cfg.p2 = PERSONA_IDS[opp_btns[1].selected]
+	cfg.p3 = PERSONA_IDS[opp_btns[2].selected]
+	cfg.players = "4" if players_opt.selected == 1 else "3"
 	_save_cfg()
 	_start_game()
 
@@ -616,7 +717,7 @@ func _build_shell() -> Control:
 	var ss := _sb(C_BG2, C_LINE, 0, 0, 12)
 	ss.border_width_left = 1
 	side.add_theme_stylebox_override("panel", ss)
-	side.custom_minimum_size.x = 300
+	side.custom_minimum_size.x = 340
 	main.add_child(side)
 	var sv := VBoxContainer.new()
 	sv.add_theme_constant_override("separation", 8)
@@ -625,6 +726,8 @@ func _build_shell() -> Control:
 	arsenal.add_theme_font_override("normal_font", MONO)
 	arsenal.add_theme_font_override("bold_font", MONO)
 	sv.add_child(arsenal)
+	map_box = VBoxContainer.new()
+	sv.add_child(map_box)
 	sv.add_child(HSeparator.new())
 	sv.add_child(_lbl("EVENT LOG", 14, C_AMBER, HEAD))
 	logbox = RichTextLabel.new()
@@ -641,19 +744,27 @@ func _build_shell() -> Control:
 # ====================================================================== start / events
 func _start_game() -> void:
 	var ids := ["hawk", "dove", "opp", "wild"]
-	var a: String = cfg.p1 if cfg.p1 != "random" else ids[randi() % ids.size()]
-	var b: String = cfg.p2 if cfg.p2 != "random" else ids[randi() % ids.size()]
-	if a == b and (cfg.p1 == "random" or cfg.p2 == "random") and not (cfg.p1 != "random" and cfg.p2 != "random"):
-		var tries := 0
-		while b == a and tries < 20:
-			b = ids[randi() % ids.size()]
-			tries += 1
-	var nm2: String = NPGame.PERSONAS[b].name + (" II" if a == b else "")
+	var n_ai := 3 if str(cfg.players) == "4" else 2
+	var picks: Array = []
+	for i in range(n_ai):
+		picks.append(str(cfg["p%d" % (i + 1)]))
+	for i in range(n_ai):
+		if picks[i] == "random":
+			var pool: Array = ids.filter(func(x): return not picks.has(x))
+			if pool.is_empty():
+				pool = ids
+			picks[i] = pool[randi() % pool.size()]
+	var plist: Array = [{"name": cfg.name, "human": true}]
+	var seen := {}
+	for pid in picks:
+		var nm: String = NPGame.PERSONAS[pid].name
+		var k := int(seen.get(pid, 0))
+		seen[pid] = k + 1
+		if k > 0:
+			nm += " " + ["", "II", "III", "IV"][mini(k, 3)]
+		plist.append({"name": nm, "persona": pid})
 	G = NPGame.new()
-	G.setup({"mode": cfg.mode, "bio": cfg.bio, "players": [
-		{"name": cfg.name, "human": true},
-		{"name": NPGame.PERSONAS[a].name, "persona": a},
-		{"name": nm2, "persona": b}]})
+	G.setup({"mode": cfg.mode, "bio": cfg.bio, "players": plist})
 	ME = G.players[0]
 	end_shown = false
 	ff = false
@@ -667,7 +778,7 @@ func _start_game() -> void:
 	G.event.connect(_on_event)
 	menu_root.visible = false
 	game_root.visible = true
-	G.log_msg("Game on - %s WAR%s. %s goes first." % [G.mode.to_upper(), (" + BIOWAR " + G.bio) if G.bio != "off" else "", G.cur().name], "sys")
+	G.log_msg("Game on - %s rules, %d players%s. %s goes first." % [G.mode.to_upper(), G.players.size(), (" + BIOWAR " + G.bio) if G.bio != "off" else "", G.cur().name], "sys")
 	_fast_start()
 	_pump()
 
@@ -704,7 +815,10 @@ func _pump() -> void:
 		_finish()
 		return
 	if st == "prompt":
-		_counter_modal()
+		if str(G.prompt.get("type", "")) == "trade":
+			_trade_modal()
+		else:
+			_counter_modal()
 		return
 	if st == "human":
 		_on_human_turn(tok)
@@ -727,7 +841,7 @@ func _on_human_turn(tok: int) -> void:
 			if tok == pump_token and G != null and G.cur() == ME and G.phase == "play":
 				G.play_skip(ME)
 				_pump()
-	elif G.phase == "war":
+	elif G.phase == "war" and G.mode != "classic":
 		var L2 := G.legal(ME)
 		if not L2.can_test and L2.attacks.is_empty():
 			_toast("No Test or Attack available - standing down.")
@@ -778,7 +892,28 @@ func _fast_react(by: NPGame.Player) -> void:
 		var r: Array = p.persona.react
 		_schedule_fast(p, lerpf(r[0], r[1], randf()) * 0.45)
 
+func _fs_on() -> bool:
+	var m := DisplayServer.window_get_mode()
+	return m == DisplayServer.WINDOW_MODE_FULLSCREEN or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+
+func _fs_label() -> String:
+	return "Windowed" if _fs_on() else "Fullscreen"
+
+func _toggle_fullscreen() -> void:
+	var on := not _fs_on()
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED)
+	cfg.fullscreen = on
+	_save_cfg()
+	_refresh_fs_buttons()
+
+func _refresh_fs_buttons() -> void:
+	if btn.has("fs_menu") and is_instance_valid(btn.fs_menu):
+		btn.fs_menu.text = _fs_label().to_upper()
+	if G != null and game_root.visible:
+		_render_top()
+
 func _on_resize() -> void:
+	_refresh_fs_buttons()
 	if G != null and game_root.visible:
 		_render()
 
@@ -797,7 +932,8 @@ func _render_top() -> void:
 	brand.add_child(_lbl("NUCLEAR", 22, C_INK, HEAD))
 	brand.add_child(_lbl("POKER", 22, C_AMBER, HEAD))
 	topbar.add_child(brand)
-	topbar.add_child(_chip({"slow": "Slow WAR", "fog": "Fog WAR", "fast": "Fast WAR"}[G.mode], true))
+	topbar.add_child(_chip({"classic": "Classic", "slow": "Slow WAR", "fog": "Fog WAR", "fast": "Fast WAR"}[G.mode], true))
+	topbar.add_child(_chip("%d players" % G.players.size()))
 	if G.bio != "off":
 		topbar.add_child(_chip("Biowar " + G.bio, true))
 	topbar.add_child(_chip("Round %d" % G.round_no))
@@ -810,6 +946,9 @@ func _render_top() -> void:
 	var ru := _btn("Rules", "default", 13)
 	ru.pressed.connect(_rules_modal)
 	topbar.add_child(ru)
+	var fsb := _btn(_fs_label(), "default", 13)
+	fsb.pressed.connect(_toggle_fullscreen)
+	topbar.add_child(fsb)
 	var so := _btn("Sound: off" if muted else "Sound: on", "default", 13)
 	so.pressed.connect(func():
 		muted = not muted
@@ -828,8 +967,8 @@ func _render_board() -> void:
 	mini_w = clampf(vw * 0.036, 38.0, 56.0)
 	var opps := HBoxContainer.new()
 	opps.add_theme_constant_override("separation", 12)
-	opps.add_child(_seat(G.players[1]))
-	opps.add_child(_seat(G.players[2]))
+	for i in range(1, G.players.size()):
+		opps.add_child(_seat(G.players[i]))
 	board.add_child(opps)
 	board.add_child(_center_band())
 	board.add_child(_me_panel())
@@ -863,10 +1002,22 @@ func _seat(p: NPGame.Player) -> Control:
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 5)
 	pc.add_child(vb)
-	var hd := HBoxContainer.new()
-	hd.add_theme_constant_override("separation", 8)
+	var hd := HFlowContainer.new()
+	hd.add_theme_constant_override("h_separation", 8)
+	hd.add_theme_constant_override("v_separation", 3)
 	hd.add_child(_lbl(p.name.to_upper(), 20, C_INK, HEAD))
 	hd.add_child(_lbl(p.persona.title, 12, _persona_color(p), MONO))
+	if ME.alive and p.alive and p != ME:
+		if G.neighbors_of(ME).has(p):
+			var al := G.alive_list()
+			var side := "LEFT" if al[(al.find(ME) + 1) % al.size()] == p else "RIGHT"
+			hd.add_child(_badge("ON YOUR %s - SHORT RANGE" % side, Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
+		else:
+			hd.add_child(_badge("ACROSS - LONG RANGE ONLY", C_MUT, C_PANEL2, C_LINE))
+	if G.mode == "classic" and p.alive:
+		for d in G.debts:
+			if d.to == p.id:
+				hd.add_child(_badge("OWES %s A CARD" % ("YOU" if d.from == ME.id else G.players[d.from].name.to_upper()), Color("#9fd2ff"), Color("#101c2a"), Color("#2f5f8f")))
 	if p.tested:
 		hd.add_child(_badge("TESTED", Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
 	if G.phase == "fog" and G.fog_choices.has(p.id) and p.alive:
@@ -918,6 +1069,27 @@ func _banner() -> Control:
 	elif not ME.alive:
 		text = "You were eliminated. The game continues without you..."
 		tone = "dead"
+	elif G.mode == "classic":
+		var wa := _war_peek()
+		if G.phase == "honour":
+			if G.cur() == ME and not G._debts_of(ME).is_empty():
+				text = "[b][color=#f2b134]A trade is due.[/color][/b] %s gave you a card. Click a card in your hand to hand one back - or deceive them." % G.players[G._debts_of(ME)[0].from].name
+				tone = "you"
+			else:
+				text = "%s is deciding whether to honour a trade..." % G.cur().name
+		elif G.phase == "play":
+			if G.cur() == ME:
+				text = "[b][color=#f2b134]Your turn.[/color][/b] Research a card - or click a card in your hand to offer it in a trade."
+				tone = "you"
+			else:
+				text = "%s is thinking..." % G.cur().name
+		elif wa == ME.id:
+			text = "[b][color=#f2b134]Exchange window.[/color][/b] Declare a Nuclear Test or an Attack - or stand down."
+			tone = "you"
+		elif wa >= 0:
+			text = "Exchange window: %s is deciding..." % G.players[wa].name
+		else:
+			text = "Nuclear exchanges: nobody has anything to declare."
 	elif G.phase == "fog":
 		if G.fog_pending().has(ME):
 			text = "[b][color=#f2b134]Fog of war.[/color][/b] Write down your order."
@@ -980,6 +1152,8 @@ func _center_band() -> Control:
 		pile.add_child(v)
 	hb.add_child(pile)
 	hb.add_child(_banner())
+	if G.mode == "classic":
+		return hb
 	var wc := PanelContainer.new()
 	wc.add_theme_stylebox_override("panel", _sb(C_PANEL2, C_LINE, 1, 8, 8))
 	wc.custom_minimum_size.x = 250
@@ -987,8 +1161,54 @@ func _center_band() -> Control:
 	hb.add_child(wc)
 	return hb
 
+func _war_peek() -> int:
+	if G.mode == "classic" and G.phase == "war" and not G.war_queue.is_empty():
+		return int(G.war_queue[0])
+	return -1
+
+func _short_name(p: NPGame.Player) -> String:
+	if p.human:
+		return p.name.left(7)
+	var parts := p.name.split(" ")
+	parts.remove_at(0)
+	return " ".join(parts).left(7)
+
+## Where everyone sits - solid amber = neighbours (Short range), dashed = across (Long range only).
+func _map_panel() -> Control:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _sb(C_PANEL2, C_LINE, 1, 10, 8))
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	pc.add_child(vb)
+	vb.add_child(_lbl("THE TABLE  -  turns go clockwise", 12, C_MUT, MONO))
+	var tm := TableMap.new()
+	tm.font = MONO
+	tm.custom_minimum_size = Vector2(296, 176)
+	var al := G.alive_list()
+	for p in G.players:
+		tm.seats.append({"name": _short_name(p), "alive": p.alive, "tested": p.tested, "turn": G.turn == p.id and not G.over,
+			"you": p == ME, "color": C_GREEN if p == ME else _persona_color(p)})
+	var short_pairs := {}
+	for p in al:
+		for q in G.neighbors_of(p):
+			var a := mini(p.id, q.id)
+			var b := maxi(p.id, q.id)
+			short_pairs["%d-%d" % [a, b]] = true
+			if not tm.links.has([a, b, "short"]):
+				tm.links.append([a, b, "short"])
+	for i in range(al.size()):
+		for j in range(i + 1, al.size()):
+			var a2: int = al[i].id
+			var b2: int = al[j].id
+			if not short_pairs.has("%d-%d" % [a2, b2]):
+				tm.links.append([a2, b2, "long"])
+	vb.add_child(tm)
+	var lg := _rtl("[color=#f2b134][b]Solid[/b][/color] = neighbours: [b]Short range[/b] reaches.  [color=#8c9aab][b]Dashed[/b][/color] = across: needs [b]Long range[/b].", 12, C_MUT)
+	vb.add_child(lg)
+	return pc
+
 func _me_panel() -> Control:
-	var myturn: bool = not G.over and ME.alive and (G.cur() == ME or (G.phase == "fog" and G.fog_pending().has(ME)))
+	var myturn: bool = not G.over and ME.alive and ((G.cur() == ME and G.phase != "war") or (G.phase == "fog" and G.fog_pending().has(ME)) or _war_peek() == ME.id or (G.mode != "classic" and G.cur() == ME))
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _sb(C_PANEL, C_AMBER if myturn else C_LINE, 2 if myturn else 1, 12, 12))
 	var vb := VBoxContainer.new()
@@ -1002,6 +1222,12 @@ func _me_panel() -> Control:
 		hd.add_child(_badge("TESTED", Color("#ffd37a"), Color("#2b2210"), Color("#7a5d18")))
 	if not ME.alive:
 		hd.add_child(_badge("eliminated", C_MUT, C_PANEL2, C_LINE))
+	if G.mode == "classic" and ME.alive:
+		for d in G.debts:
+			if d.to == ME.id:
+				hd.add_child(_badge("YOU OWE %s A CARD" % G.players[d.from].name.to_upper(), Color("#9fd2ff"), Color("#101c2a"), Color("#2f5f8f")))
+			elif d.from == ME.id:
+				hd.add_child(_badge("%s OWES YOU A CARD" % G.players[d.to].name.to_upper(), Color("#9fd2ff"), Color("#101c2a"), Color("#2f5f8f")))
 	hd.add_child(_spacer())
 	hd.add_child(_lbl("%d in hand" % ME.hand.size(), 12, C_MUT, MONO))
 	vb.add_child(hd)
@@ -1055,6 +1281,9 @@ func _action_bar() -> Control:
 	wrap.add_child(bar)
 	if not ME.alive:
 		bar.add_child(_lbl("Spectating.", 13, C_MUT))
+		return wrap
+	if G.mode == "classic":
+		_classic_actions(bar)
 		return wrap
 	var my_turn: bool = G.cur() == ME
 	var L := G.legal(ME)
@@ -1125,7 +1354,56 @@ func _action_bar() -> Control:
 		wrap.add_child(fb)
 	return wrap
 
+func _classic_actions(bar: HFlowContainer) -> void:
+	var L := G.legal(ME)
+	if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
+		var cr: NPGame.Player = G.players[G._debts_of(ME)[0].from]
+		var rb := _btn("Deceive %s - keep the card" % cr.name, "danger")
+		rb.pressed.connect(func():
+			G.renege(ME)
+			_after_human())
+		bar.add_child(rb)
+		btn["renege"] = rb
+		bar.add_child(_lbl("or click a card in your hand to give it to %s" % cr.name, 13, C_MUT))
+	elif G.phase == "play" and G.cur() == ME:
+		var rb2 := _btn("Research - draw a card", "primary")
+		rb2.disabled = not L.can_research
+		rb2.pressed.connect(_act_research)
+		bar.add_child(rb2)
+		btn["research"] = rb2
+		bar.add_child(_lbl("or click a card in your hand to offer it in a trade" if L.can_research else "The deck is empty - offer a trade, or skip.", 13, C_MUT))
+		if not L.can_research:
+			var sk := _btn("Skip turn")
+			sk.pressed.connect(func():
+				G.play_skip(ME)
+				_after_human())
+			bar.add_child(sk)
+			btn["skip"] = sk
+	elif G.phase == "war" and _war_peek() == ME.id:
+		var sd := _btn("Stand down")
+		sd.pressed.connect(func():
+			G.war_declare(ME, {"kind": "pass"})
+			_after_human())
+		bar.add_child(sd)
+		btn["stand"] = sd
+		var tb := _btn("Nuclear Test")
+		tb.disabled = not L.can_test
+		tb.pressed.connect(_act_test)
+		bar.add_child(tb)
+		btn["test"] = tb
+		var ab := _btn("Attack...", "danger")
+		ab.disabled = L.attacks.is_empty()
+		ab.pressed.connect(_attack_modal.bind("turn"))
+		bar.add_child(ab)
+		btn["attack"] = ab
+		bar.add_child(_lbl("choose one", 13, C_MUT))
+	else:
+		bar.add_child(_lbl("Waiting for the table...", 13, C_MUT))
+
 func _render_side() -> void:
+	_clear(map_box)
+	if G.mode == "classic":
+		map_box.add_child(_map_panel())
 	var tested := ME.tested
 	var lines: Array = []
 	var tech_bits: Array = []
@@ -1181,7 +1459,9 @@ func _act_research() -> void:
 		_after_human()
 
 func _act_test() -> void:
-	if G.mode == "fast" or not (G.phase == "war" and G.cur() == ME):
+	if G.mode == "classic":
+		G.war_declare(ME, {"kind": "test"})
+	elif G.mode == "fast" or not (G.phase == "war" and G.cur() == ME):
 		G.instant(ME, {"kind": "test"}, true)
 	else:
 		G.human_war({"kind": "test"})
@@ -1190,7 +1470,9 @@ func _act_test() -> void:
 func _act_launch(mode: String, type: String, tid: int) -> void:
 	var choice := {"kind": "attack", "type": type, "target": tid}
 	_close_modal()
-	if mode == "turn":
+	if G.mode == "classic":
+		G.war_declare(ME, choice)
+	elif mode == "turn":
 		G.human_war(choice)
 	elif mode == "fog":
 		G.submit_fog(ME.id, choice)
@@ -1271,7 +1553,28 @@ func _card_menu(cid: int, node: Control) -> void:
 	vb.add_child(_lbl(NPGame.INFO[c.key].name.to_upper(), 18, C_AMBER, HEAD))
 	vb.add_child(_lbl(CARD_DESC[c.key], 12, C_MUT, null, true))
 	var any := false
-	if not c.pub:
+	if G.mode == "classic":
+		if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
+			var cr: NPGame.Player = G.players[G._debts_of(ME)[0].from]
+			var hb := _btn("Give to " + cr.name, "primary", 14)
+			hb.pressed.connect(func():
+				G.honour(ME, cid)
+				_after_human())
+			vb.add_child(hb)
+			vb.add_child(_lbl("Completes the trade you agreed to.", 12, C_MUT, null, true))
+			any = true
+		elif my_play:
+			vb.add_child(_lbl("Offer this card face-down. If they agree they take it now - and owe you one back on their next turn (or deceive you).", 12, C_MUT, null, true))
+			for o in G.others(ME):
+				var ob := _btn("Offer to " + o.name, "default", 14)
+				ob.pressed.connect(func():
+					var res := G.trade_offer(ME, cid, o.id)
+					if res == "declined":
+						_toast("%s declines your offer." % o.name)
+					_after_human())
+				vb.add_child(ob)
+			any = true
+	elif not c.pub:
 		var rb := _btn("Reveal to everyone", "default", 14)
 		rb.pressed.connect(func():
 			G.reveal(ME, cid)
@@ -1279,7 +1582,7 @@ func _card_menu(cid: int, node: Control) -> void:
 			_render())
 		vb.add_child(rb)
 		any = true
-	if my_play:
+	if my_play and G.mode != "classic":
 		for o in G.others(ME):
 			var gb := _btn("Give to " + o.name, "default", 14)
 			gb.pressed.connect(func():
@@ -1394,7 +1697,7 @@ func _atk_panel(vb: VBoxContainer, title: String, desc: String) -> HFlowContaine
 
 func _attack_list(vb: VBoxContainer, L: Dictionary, mode: String) -> void:
 	var info := {
-		"short": ["Short-range strike", "Eliminates one neighboring player. Shows the Capabilities it needs."],
+		"short": ["Short-range strike", "Eliminates a player sitting immediately to your left or right. Shows the Capabilities it needs."],
 		"long": ["Long-range strike", "Eliminates any one player. Shows the Capabilities it needs."],
 		"super": ["Superpower strike", "Eliminates any one player - usable at any time."],
 		"plague": ["Plague", "Eliminates ALL players without Labs. You are protected by your own Labs."]}
@@ -1407,7 +1710,10 @@ func _attack_list(vb: VBoxContainer, L: Dictionary, mode: String) -> void:
 			modal_btns.append({"kind": "launch", "type": "plague", "button": pb})
 		else:
 			for tid in a.targets:
-				var tb := _btn("Target: " + G.players[tid].name, "danger")
+				var rel := ""
+				if a.type == "long" or a.type == "super":
+					rel = " (next to you)" if G.neighbors_of(ME).has(G.players[tid]) else " (across the table)"
+				var tb := _btn("Target: " + G.players[tid].name + rel, "danger")
 				tb.pressed.connect(_act_launch.bind(mode, a.type, tid))
 				fl.add_child(tb)
 				modal_btns.append({"kind": "launch", "type": a.type, "button": tb})
@@ -1440,6 +1746,30 @@ func _fog_modal() -> void:
 		f2.add_child(tb)
 		modal_btns.append({"kind": "fog_test", "button": tb})
 	_attack_list(vb, L, "fog")
+
+func _trade_modal() -> void:
+	var pr := G.prompt
+	if pr.is_empty() or not pr.player.human or modal != null:
+		return
+	var vb := _open_modal("Trade offer", false, true, false)
+	vb.add_child(_rtl("[b]%s[/b] offers you a face-down card in trade.\n\nAccept, and the card is yours now - but you owe them one card back on your next turn (you may deceive them, as they may deceive you). Decline, and nothing changes." % pr.from.name, 15, Color("#c3ccd6")))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var y := _btn("Accept", "primary")
+	y.pressed.connect(func():
+		_close_modal(true)
+		G.answer_trade(true)
+		_after_human())
+	var n := _btn("Decline")
+	n.pressed.connect(func():
+		_close_modal(true)
+		G.answer_trade(false)
+		_after_human())
+	row.add_child(y)
+	row.add_child(n)
+	vb.add_child(row)
+	modal_btns.append({"kind": "trade_yes", "button": y})
+	modal_btns.append({"kind": "trade_no", "button": n})
 
 func _counter_modal() -> void:
 	var pr := G.prompt
@@ -1477,7 +1807,37 @@ func _peek_modal() -> void:
 func _rules_modal() -> void:
 	var vb := _open_modal("How to play", false, false, G != null)
 	_close_btn(vb, "Close")
+	var classic: bool = (G.mode == "classic") if G != null else (str(cfg.mode) == "classic")
 	var txt := "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b] - play until someone is the last power standing, or everyone agrees to stop.\n\n"
+	if classic:
+		txt += "[color=#f2b134][b]GOAL[/b][/color]\n"
+		txt += "Successfully [b]test a nuclear weapon[/b] (collect all four Technology cards), then become a [b]Nuclear Superpower[/b] (all four Capability cards).\n\n"
+		txt += "[color=#f2b134][b]SET UP[/b][/color]\n"
+		txt += "One 8-card set per player, plus one extra set: 3 players = 32 cards, 4 players = 40 (plus 4 Labs + 4 Plague per set with Biowar). Everyone is dealt 3 cards; the rest is the draw pile.\n\n"
+		txt += "[color=#f2b134][b]YOUR TURN: DRAW OR TRADE[/b][/color]\n"
+		txt += "- [b]Research[/b]: draw a card.\n"
+		txt += "- [b]Trade[/b]: click a card in your hand and offer it face-down to another player. If they agree, they take your card [i]now[/i] - but they only give a card back on [i]their[/i] next turn, and they are [b]not obliged[/b] to. Trading partners can deceive!\n"
+		txt += "- If the draw pile runs out you can only trade, or skip.\n\n"
+		txt += "[color=#f2b134][b]NUCLEAR TEST[/b][/color]\n"
+		txt += "Hold Uranium, Refinement, Warhead and Testing and put them on the table whenever you like. You only need to do this once.\n\n"
+		txt += "[color=#f2b134][b]ATTACKS[/b][/color]\n"
+		txt += "- [b]Short range[/b] (after a test): eliminate a player sitting immediately to your left or right.\n"
+		txt += "- [b]Long range[/b] (needs Short): eliminate anyone at the table.\n"
+		txt += "- [b]Counter-strike[/b] (the sheet's Second Strike; needs Short + Long): when you are eliminated, you immediately eliminate one player in retaliation.\n"
+		txt += "- [b]Superpower[/b] (all four Capabilities + a test): strike several countries.\n"
+		txt += "- Anyone can attack [b]out of turn[/b]. Here, nuclear exchanges follow the sheet's house rule - declared in [b]order of play[/b]: after every turn, starting with the player who just moved and going clockwise, each player may declare a test or an attack, or stand down. After any action the order starts again.\n\n"
+		txt += "[color=#f2b134][b]THE TABLE MAP[/b][/color]\n"
+		txt += "[b]Solid amber[/b] lines join neighbours - Short range reaches them. [b]Dashed[/b] lines join players across the table - only Long range reaches them. With 3 players everybody is a neighbour. When a player is eliminated the gap closes and the players either side become neighbours.\n\n"
+		txt += "[color=#f2b134][b]NOTES[/b][/color]\n"
+		txt += "- An attack shows (and locks on the table) the Capabilities it needs. An eliminated player's hand is revealed and set aside.\n"
+		txt += "- [b]Biowar[/b]: [b]Labs[/b] protect you from [b]Plague[/b]; a Plague attack eliminates all players without Labs. In [b]2000[/b] you need a test and all 4 Capabilities first; in [b]2035[/b] you just show Labs and play it."
+		vb.add_child(_rtl(txt, 15, Color("#c3ccd6")))
+		var strip0 := HFlowContainer.new()
+		strip0.add_theme_constant_override("h_separation", 6)
+		for k0 in ORDER:
+			strip0.add_child(_tex(k0, 56))
+		vb.add_child(strip0)
+		return
 	txt += "[color=#f2b134][b]YOUR TURN[/b][/color]\n"
 	txt += "- [b]Research[/b]: draw a card. [b]Proliferation[/b]: give a card from your hand to another player. [b]Disarmament[/b]: return a card to the deck. (Click a card in your hand to give or return it.)\n"
 	txt += "- Then the [b]WAR rules[/b] decide what else you can do. [b]Slow[/b]: after your play action you may do nothing, a Nuclear Test, or an Attack. [b]Fog[/b]: after each turn everyone secretly picks an order and all resolve at once. [b]Fast[/b]: anyone may Test or Attack at any time, in real time.\n\n"
@@ -1610,6 +1970,12 @@ func _toast(msg: String) -> void:
 	tw.tween_callback(pc.queue_free)
 
 func _unhandled_key_input(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed and not e.echo:
+		var enter: bool = e.keycode == KEY_ENTER or e.keycode == KEY_KP_ENTER
+		if e.keycode == KEY_F11 or (enter and e.alt_pressed) or (e.keycode == KEY_F and (e.meta_pressed or e.ctrl_pressed)):
+			_toggle_fullscreen()
+			get_viewport().set_input_as_handled()
+			return
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
 		if popup != null:
 			_close_popup()
@@ -1621,27 +1987,43 @@ func _shot(path: String) -> void:
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(path)
 
+## Presses a real button inside the card popup whose label starts with `prefix`.
+func _popup_press(prefix: String) -> bool:
+	if popup == null:
+		return false
+	for b in popup.find_children("*", "Button", true, false):
+		if b.text.begins_with(prefix) and not b.disabled:
+			b.pressed.emit()
+			return true
+	return false
+
+func _first_hand_card() -> HandCard:
+	for n in board.find_children("*", "Control", true, false):
+		if n is HandCard:
+			return n
+	return null
+
 func _autotest() -> void:
 	speed = 40.0
 	var out_dir := "/tmp/gshots"
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	await get_tree().process_frame
 	await _shot(out_dir + "/menu.png")
-	var runs := [["slow", "off"], ["fog", "off"], ["fast", "off"], ["slow", "2035"], ["fog", "2000"]]
+	var runs := [["classic", "off", "3"], ["classic", "off", "4"], ["classic", "2035", "3"], ["classic", "2000", "4"], ["classic", "off", "4"]]
 	var bad := 0
 	for run in runs:
 		cfg.mode = run[0]
 		cfg.bio = run[1]
+		cfg.players = run[2]
 		_start_game()
-		var acts := {"research": 0, "test": 0, "attack": 0, "stand": 0, "fog": 0, "counter": 0, "give": 0, "ret": 0}
+		var acts := {"research": 0, "offer": 0, "trade_yes": 0, "trade_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0}
 		var iter := 0
 		var shot_taken := false
-		while iter < 4000:
+		while iter < 6000:
 			iter += 1
 			await get_tree().create_timer(0.02).timeout
 			if G == null or G.over and modal != null and not modal_btns.is_empty() and modal_btns[0].kind == "again":
 				break
-			# modal buttons first
 			var handled := false
 			for mb in modal_btns:
 				if not is_instance_valid(mb.button) or mb.button.disabled:
@@ -1651,42 +2033,42 @@ func _autotest() -> void:
 					acts.counter += 1
 					handled = true
 					break
-				if mb.kind == "launch" and G.phase == "fog" and randf() < 0.7:
-					mb.button.pressed.emit()
-					acts.fog += 1
+				if mb.kind == "trade_yes" or mb.kind == "trade_no":
+					var want := "trade_yes" if randf() < 0.55 else "trade_no"
+					for mb2 in modal_btns:
+						if mb2.kind == want:
+							mb2.button.pressed.emit()
+							acts[want] += 1
 					handled = true
 					break
-			if not handled and not modal_btns.is_empty() and G.phase == "fog" and modal != null and not G.over:
-				var pick: Dictionary = {}
-				for mb in modal_btns:
-					if mb.kind == "fog_test":
-						pick = mb
-				if pick.is_empty() or randf() < 0.3:
-					for mb in modal_btns:
-						if mb.kind == "fog_pass":
-							pick = mb
-				if not pick.is_empty():
-					pick.button.pressed.emit()
-					acts.fog += 1
+				if mb.kind == "launch" and randf() < 0.9:
+					mb.button.pressed.emit()
+					acts.attack += 1
 					handled = true
-			if handled or modal != null and not modal_sticky:
+					break
+			if handled or modal != null:
 				continue
-			if modal != null:
+			if popup != null:
+				_close_popup()
+			if not ME.alive or G.over:
 				continue
-			# fast-bar instant actions (Fast WAR)
-			if G.mode == "fast" and btn.has("fattack") and is_instance_valid(btn.fattack) and not btn.fattack.disabled and randf() < 0.5:
-				btn.fattack.pressed.emit()
-				await get_tree().process_frame
-				for mb in modal_btns:
-					if mb.kind == "launch":
-						mb.button.pressed.emit()
-						acts.attack += 1
-						break
+			# honour a trade, or deceive
+			if btn.has("renege") and is_instance_valid(btn.renege):
+				if randf() < 0.4:
+					btn.renege.pressed.emit()
+					acts.renege += 1
+				else:
+					var hc0 := _first_hand_card()
+					if hc0 != null:
+						hc0.picked.emit(hc0.cid, hc0)
+						await get_tree().process_frame
+						await get_tree().process_frame
+						if _popup_press("GIVE"):
+							acts.honour += 1
+						else:
+							_close_popup()
 				continue
-			if G.mode == "fast" and btn.has("ftest") and is_instance_valid(btn.ftest) and not btn.ftest.disabled and randf() < 0.5:
-				btn.ftest.pressed.emit()
-				acts.test += 1
-				continue
+			# exchange window
 			if btn.has("stand") and is_instance_valid(btn.stand):
 				if btn.has("attack") and not btn.attack.disabled:
 					btn.attack.pressed.emit()
@@ -1704,26 +2086,35 @@ func _autotest() -> void:
 				btn.stand.pressed.emit()
 				acts.stand += 1
 				continue
-			if btn.has("research") and is_instance_valid(btn.research) and not btn.research.disabled:
+			# my play turn
+			if btn.has("skip") and is_instance_valid(btn.skip) and (ME.hand.is_empty() or randf() < 0.5):
+				btn.skip.pressed.emit()
+				acts.skip += 1
+				continue
+			if btn.has("research") and is_instance_valid(btn.research):
 				if not shot_taken and iter > 40 and G.turn_no > 4:
 					shot_taken = true
-					await _shot("%s/%s-%s-board.png" % [out_dir, run[0], run[1]])
-				var r := randf()
-				if r < 0.15 and not ME.hand.is_empty():
-					var cid: int = ME.hand[0].id
-					if r < 0.08 and G.play_give(ME, cid, G.others(ME)[0].id):
-						acts.give += 1
-					elif G.play_disarm(ME, cid):
-						acts.ret += 1
-					_after_human()
-					continue
-				btn.research.pressed.emit()
-				acts.research += 1
+					await _shot("%s/%s-%s-%s-board.png" % [out_dir, run[0], run[1], run[2]])
+				if randf() < 0.3 and not ME.hand.is_empty():
+					var hc := _first_hand_card()
+					if hc != null:
+						var before := G.log_entries.size()
+						hc.picked.emit(hc.cid, hc)
+						await get_tree().process_frame
+						await get_tree().process_frame
+						if _popup_press("OFFER"):
+							acts.offer += 1
+						else:
+							_close_popup()
+						continue
+				if not btn.research.disabled:
+					btn.research.pressed.emit()
+					acts.research += 1
 		var title := "(no end)"
 		if G != null and G.over:
 			await get_tree().create_timer(0.3).timeout
 			title = G.result.kind
-			await _shot("%s/%s-%s-end.png" % [out_dir, run[0], run[1]])
+			await _shot("%s/%s-%s-%s-end.png" % [out_dir, run[0], run[1], run[2]])
 		else:
 			bad += 1
 		print("RUN ", run, " iters=", iter, " acts=", acts, " result=", title, " turns=", G.turn_no if G != null else -1)
@@ -1742,11 +2133,13 @@ func _stage_take(key: String):
 				return arr.pop_at(i)
 	return null
 
-func _stage(mode: String, bio: String, mine: Array, tested: bool) -> void:
-	cfg.mode = mode
+func _stage(np: String, bio: String, mine: Array, tested: bool) -> void:
+	cfg.mode = "classic"
 	cfg.bio = bio
+	cfg.players = np
 	cfg.p1 = "hawk"
 	cfg.p2 = "dove"
+	cfg.p3 = "wild"
 	_start_game()
 	speed = 1.0
 	pump_token += 1
@@ -1769,8 +2162,10 @@ func _stage(mode: String, bio: String, mine: Array, tested: bool) -> void:
 		h.hand.append(sh)
 	G.turn = 0
 	G.phase = "play"
+	G.trade_tried = false
+	G.war_queue = []
+	G.debts = []
 	G.int_checked = true
-	fast_tok.clear()
 	G.log_entries.clear()
 	log_shown = 0
 	logbox.clear()
@@ -1782,41 +2177,45 @@ func _shots() -> void:
 	var d := "/tmp/gshots2"
 	DirAccess.make_dir_recursive_absolute(d)
 	await get_tree().process_frame
-	await _stage("slow", "2035", ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "labs", "plague"], false)
-	await _shot(d + "/1-board.png")
-	var hc: Array = []
-	for n in board.find_children("*", "Control", true, false):
-		if n is HandCard:
-			hc.append(n)
-	if not hc.is_empty():
-		_card_menu(hc[3].cid, hc[3])
+	await _shot(d + "/0-menu.png")
+	await _stage("4", "off", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
+	await _shot(d + "/1-board4.png")
+	var hc := _first_hand_card()
+	if hc != null:
+		_card_menu(hc.cid, hc)
 		await get_tree().create_timer(0.4).timeout
-		await _shot(d + "/2-popup.png")
+		await _shot(d + "/2-offer-popup.png")
 		_close_popup()
+	await _stage("3", "off", ["uranium", "refinement", "warhead", "testing", "short", "long", "counter"], false)
+	await _shot(d + "/3-board3.png")
 	G.do_test(ME)
 	G.phase = "war"
+	G._rebuild_war_queue(0)
 	_render()
-	await get_tree().create_timer(2.0).timeout
-	await _shot(d + "/3a-war.png")
+	await get_tree().create_timer(0.4).timeout
+	await _shot(d + "/4-war.png")
 	_attack_modal("turn")
 	await get_tree().create_timer(0.6).timeout
-	await _shot(d + "/3-attack.png")
+	await _shot(d + "/5-attack.png")
 	_close_modal(true)
-	await _stage("fog", "off", ["uranium", "refinement", "warhead", "testing", "short"], false)
-	G.phase = "play"
-	G.play_research(ME)
-	_pump()
-	await get_tree().create_timer(1.5).timeout
-	await _shot(d + "/4-fog.png")
-	_close_modal(true)
-	await _stage("fast", "off", ["short", "long", "counter", "super"], true)
-	await get_tree().create_timer(0.3).timeout
-	_peek_modal()
+	# a trade offer from an AI, and a debt to honour
+	await _stage("4", "off", ["uranium", "short"], false)
+	G.turn = 1
+	var offered = G.players[1].hand[0]
+	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id}
+	_trade_modal()
 	await get_tree().create_timer(0.5).timeout
-	await _shot(d + "/5-peek.png")
+	await _shot(d + "/6-trade-offer.png")
 	_close_modal(true)
+	G.prompt = {}
+	G.debts = [{"from": 2, "to": 0, "got": 0}]
+	G.turn = 0
+	G.phase = "honour"
+	_render()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/7-honour.png")
 	_rules_modal()
 	await get_tree().create_timer(0.6).timeout
-	await _shot(d + "/6-rules.png")
+	await _shot(d + "/8-rules.png")
 	print("SHOTS DONE")
 	get_tree().quit(0)
