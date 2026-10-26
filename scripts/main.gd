@@ -1384,9 +1384,7 @@ func _banner() -> Control:
 				text = "%s is deciding whether to honour a trade..." % G.cur().name
 		elif G.phase == "play":
 			if G.cur() == ME:
-				text = "[b][color=#f2b134]Your turn.[/color][/b] Research a card - or drag a card from your hand onto a player to offer a trade."
-				if G.can_test(ME) or not G.attack_types(ME).is_empty():
-					text += "\nYou can Test or Attack in the exchange window straight after."
+				text = ""      # just the Research button (and drag-to-trade); How to play explains the rest
 				tone = "you"
 			else:
 				text = "%s is thinking..." % G.cur().name
@@ -1412,6 +1410,7 @@ func _banner() -> Control:
 	hb.alignment = BoxContainer.ALIGNMENT_CENTER
 	hb.add_theme_constant_override("separation", 12)
 	var r := _rtl("[center]%s[/center]" % text, 16)
+	r.visible = text != ""
 	hb.add_child(r)
 	if not ME.alive and not G.over:
 		var sk := _btn("Skip to end", "default", 13)
