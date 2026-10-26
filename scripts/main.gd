@@ -139,7 +139,15 @@ class HandCard extends Control:
 	var cid := 0
 	var base_y := 0.0
 	var fresh := false
+	var can_drag := false
+	var preview: Callable
 	var tw: Tween
+	func _get_drag_data(_at: Vector2) -> Variant:
+		if not can_drag:
+			return null
+		if preview.is_valid():
+			set_drag_preview(preview.call())
+		return {"cid": cid}
 	func _ready() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -152,8 +160,36 @@ class HandCard extends Control:
 		tw = create_tween()
 		tw.tween_property(self, "position:y", base_y - (24.0 if on else 0.0), 0.12)
 	func _gui_input(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			picked.emit(cid, self)
+
+class DragSrc extends Control:
+	## A card that can be dragged onto a DropTarget. `preview` builds the card that follows the pointer.
+	var cid := 0
+	var preview: Callable
+	func _ready() -> void:
+		mouse_default_cursor_shape = Control.CURSOR_DRAG
+	func _get_drag_data(_at: Vector2) -> Variant:
+		if preview.is_valid():
+			set_drag_preview(preview.call())
+		return {"cid": cid}
+
+class DropTarget extends PanelContainer:
+	## Accepts a dragged card when `accept` allows it; glows while a card is being dragged that fits.
+	var accept: Callable
+	var on_drop: Callable
+	func _can_drop_data(_at: Vector2, data: Variant) -> bool:
+		return data is Dictionary and data.has("cid") and accept.is_valid() and accept.call(data)
+	func _drop_data(_at: Vector2, data: Variant) -> void:
+		modulate = Color.WHITE
+		on_drop.call(data)
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_DRAG_BEGIN:
+			var d = get_viewport().gui_get_drag_data()
+			if d is Dictionary and d.has("cid") and accept.is_valid() and accept.call(d):
+				modulate = Color(1.25, 1.2, 0.9)
+		elif what == NOTIFICATION_DRAG_END:
+			modulate = Color.WHITE
 
 class HandView extends Control:
 	var cw := 100.0
@@ -427,6 +463,8 @@ func _ready() -> void:
 		_autotest.call_deferred()
 	elif "--shots" in OS.get_cmdline_user_args():
 		_shots.call_deferred()
+	elif "--dragtest" in OS.get_cmdline_user_args():
+		_dragtest.call_deferred()
 
 func _load_cfg() -> void:
 	var cf := ConfigFile.new()
@@ -1005,7 +1043,7 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 3)
 	pc.add_child(vb)
-	vb.add_child(_lbl("TRADE AREA - face-up", 11, Color("#9fd2ff"), MONO))
+	vb.add_child(_lbl("TRADE AREA", 11, Color("#9fd2ff"), MONO))
 	var fl := HFlowContainer.new()
 	fl.add_theme_constant_override("h_separation", 6)
 	fl.custom_minimum_size.y = w * 430.0 / 330.0 + 2
@@ -1033,7 +1071,9 @@ func _mini_pub(key: String) -> Control:
 
 func _seat(p: NPGame.Player) -> Control:
 	var turn: bool = G.turn == p.id and not G.over and p.alive
-	var pc := PanelContainer.new()
+	var pc := DropTarget.new()
+	pc.accept = func(_d): return _can_offer() and p != ME and p.alive
+	pc.on_drop = func(d): _drop_offer(p, d)
 	pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pc.add_theme_stylebox_override("panel", _sb(C_PANEL, C_AMBER if turn else C_LINE, 2 if turn else 1, 12, 10))
 	var vb := VBoxContainer.new()
@@ -1090,6 +1130,7 @@ func _seat(p: NPGame.Player) -> Control:
 		ov.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		ov.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pc.add_child(ov)
+	_pass_through(pc)
 	return pc
 
 func _warcard_text() -> String:
@@ -1118,7 +1159,7 @@ func _banner() -> Control:
 				text = "%s is deciding whether to honour a trade..." % G.cur().name
 		elif G.phase == "play":
 			if G.cur() == ME:
-				text = "[b][color=#f2b134]Your turn.[/color][/b] Research a card - or click a card in your hand to offer it in a trade."
+				text = "[b][color=#f2b134]Your turn.[/color][/b] Research a card - or drag a card from your hand onto a player to offer a trade."
 				tone = "you"
 			else:
 				text = "%s is thinking..." % G.cur().name
@@ -1303,6 +1344,8 @@ func _me_panel() -> Control:
 			mk.position = Vector2(4, hv.ch - 24)
 			mk.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			hc.add_child(mk)
+		hc.can_drag = G.mode == "classic" and _can_offer()
+		hc.preview = _drag_preview.bind(c.key)
 		hc.picked.connect(_card_menu)
 		hv.add_child(hc)
 	vb.add_child(hv)
@@ -1420,7 +1463,7 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		rb2.pressed.connect(_act_research)
 		bar.add_child(rb2)
 		btn["research"] = rb2
-		bar.add_child(_lbl("or click a card in your hand to offer it in a trade" if L.can_research else "The deck is empty - offer a trade, or skip.", 13, C_MUT))
+		bar.add_child(_lbl("or drag a card from your hand onto a player to offer a trade" if L.can_research else "The deck is empty - offer a trade, or skip.", 13, C_MUT))
 		if not L.can_research:
 			var sk := _btn("Skip turn")
 			sk.pressed.connect(func():
@@ -1586,6 +1629,36 @@ func _to_menu() -> void:
 	game_root.visible = false
 	menu_root.visible = true
 
+# ---- drag and drop
+func _can_offer() -> bool:
+	return G != null and G.mode == "classic" and not G.over and ME.alive and G.cur() == ME and G.phase == "play" and G.prompt.is_empty() and ME.trade.is_empty()
+
+func _drag_preview(key: String) -> Control:
+	var t := _tex(key, 92)
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	t.modulate.a = 0.9
+	t.position = Vector2(-46, -60)
+	var holder := Control.new()
+	holder.add_child(t)
+	return holder
+
+## Letting go of a dragged card on a player's seat offers it to them.
+func _drop_offer(p: NPGame.Player, data: Dictionary) -> void:
+	if not _can_offer() or p == ME or not p.alive:
+		return
+	_close_popup()
+	var res := G.trade_offer(ME, int(data.cid), p.id)
+	if res == "declined":
+		_toast("No deal with %s - offer again, or draw instead." % p.name)
+	_after_human()
+
+## Controls inside a drop target must not swallow the drop: let mouse events pass up to it.
+func _pass_through(n: Node) -> void:
+	for ch in n.get_children():
+		if ch is Control and not (ch is BaseButton) and ch.mouse_filter == Control.MOUSE_FILTER_STOP:
+			ch.mouse_filter = Control.MOUSE_FILTER_PASS
+		_pass_through(ch)
+
 # ---- card popup
 func _card_menu(cid: int, node: Control) -> void:
 	_close_popup()
@@ -1614,16 +1687,8 @@ func _card_menu(cid: int, node: Control) -> void:
 	vb.add_child(_lbl(CARD_DESC[c.key], 12, C_MUT, null, true))
 	var any := false
 	if G.mode == "classic":
-		if my_play and ME.trade.is_empty():
-			vb.add_child(_lbl("Offer this card in a trade. It goes face-up in your trade area; they may answer with a card of theirs, and you decide.", 12, C_MUT, null, true))
-			for o in G.others(ME):
-				var ob := _btn("Offer to " + o.name, "default", 14)
-				ob.pressed.connect(func():
-					var res := G.trade_offer(ME, cid, o.id)
-					if res == "declined":
-						_toast("No deal with %s - offer again, or draw instead." % o.name)
-					_after_human())
-				vb.add_child(ob)
+		if _can_offer():
+			vb.add_child(_lbl("Drag this card onto a player to offer it in a trade.", 12, C_MUT, null, true))
 			any = true
 	elif not c.pub:
 		var rb := _btn("Reveal to everyone", "default", 14)
@@ -1803,34 +1868,58 @@ func _trade_modal() -> void:
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
 	var vb := _open_modal("Trade offer", false, true, false)
-	vb.add_child(_rtl("[b]%s[/b] offers you a [b]%s[/b] - face-up in their trade area.\n\nOffer one of your cards back, also face-up, and they decide. If they accept, their card is yours at once - but yours waits in your trade area and only reaches them on [b]your next turn[/b], when you can still break the deal. Or decline." % [pr.from.name, NPGame.INFO[pr.card_key].name], 15, Color("#c3ccd6")))
+	vb.add_child(_rtl("[b]%s[/b] offers you a [b]%s[/b] in their trade area.\n\nAnswer by dragging one of your cards into your trade area, and they decide. If they accept, their card is yours at once - but yours waits in your trade area and only reaches them on [b]your next turn[/b], when you can still break the deal. Or decline." % [pr.from.name, NPGame.INFO[pr.card_key].name], 15, Color("#c3ccd6")))
 	var cr := HBoxContainer.new()
 	cr.alignment = BoxContainer.ALIGNMENT_CENTER
-	cr.add_child(_tex(str(pr.card_key), 120))
+	cr.add_child(_tex(str(pr.card_key), 84))
 	vb.add_child(cr)
-	vb.add_child(_lbl("YOUR CARDS - choose what to offer back", 12, C_MUT, MONO))
+	vb.add_child(_lbl("YOUR CARDS - drag one into your trade area to answer", 12, C_MUT, MONO))
 	var fl := HFlowContainer.new()
 	fl.add_theme_constant_override("h_separation", 10)
 	fl.add_theme_constant_override("v_separation", 8)
 	var seen := {}
+	var first_id := -1
 	var hand: Array = ME.hand.duplicate()
 	hand.sort_custom(func(a, b): return ORDER.find(a.key) < ORDER.find(b.key))
 	for c in hand:
 		if seen.has(c.key):
 			continue
 		seen[c.key] = true
-		var col := VBoxContainer.new()
-		col.add_theme_constant_override("separation", 4)
-		col.add_child(_tex(c.key, 84))
-		var ob := _btn("Offer this", "default", 13)
-		ob.pressed.connect(func():
-			_close_modal(true)
-			G.answer_trade(c.id)
-			_after_human())
-		col.add_child(ob)
-		fl.add_child(col)
-		modal_btns.append({"kind": "trade_counter", "button": ob})
+		var src := DragSrc.new()
+		src.cid = c.id
+		src.custom_minimum_size = Vector2(66, 66.0 * 430.0 / 330.0)
+		src.preview = _drag_preview.bind(c.key)
+		var tx := _tex(c.key, 66)
+		tx.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		tx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		src.add_child(tx)
+		fl.add_child(src)
+		if first_id < 0:
+			first_id = c.id
 	vb.add_child(fl)
+	var zone := DropTarget.new()
+	zone.add_theme_stylebox_override("panel", _sb(Color("#0f1a24"), Color("#2f5f8f"), 2, 8, 10))
+	zone.custom_minimum_size = Vector2(0, 52)
+	zone.accept = func(_d): return true
+	zone.on_drop = func(d):
+		_close_modal(true)
+		G.answer_trade(int(d.cid))
+		_after_human()
+	var zl := _lbl("YOUR TRADE AREA - drop a card here", 14, Color("#9fd2ff"), MONO)
+	zl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	zl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	zl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	zone.add_child(zl)
+	vb.add_child(zone)
+	# test hook: lets the UI bot answer without a real drag
+	var hook := Button.new()
+	hook.visible = false
+	hook.pressed.connect(func():
+		_close_modal(true)
+		G.answer_trade(first_id)
+		_after_human())
+	vb.add_child(hook)
+	modal_btns.append({"kind": "trade_counter", "button": hook})
 	var n := _btn("Decline")
 	n.pressed.connect(func():
 		_close_modal(true)
@@ -1845,7 +1934,7 @@ func _deal_modal() -> void:
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
 	var vb := _open_modal("Their answer", false, true, false)
-	vb.add_child(_rtl("[b]%s[/b] answers your offer. Both cards are face-up.\n\nIf you accept, your card goes to them [b]now[/b], but theirs only reaches you on [b]their next turn[/b] - and they may break the deal. Decline, and you can offer again or draw instead." % pr.partner.name, 15, Color("#c3ccd6")))
+	vb.add_child(_rtl("[b]%s[/b] answers your offer. Both cards are in the open.\n\nIf you accept, your card goes to them [b]now[/b], but theirs only reaches you on [b]their next turn[/b] - and they may break the deal. Decline, and you can offer again or draw instead." % pr.partner.name, 15, Color("#c3ccd6")))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 28)
@@ -2055,7 +2144,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Set up")
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: click a card in your hand and offer it to one other player. It goes [b]face-up[/b] in your [b]trade area[/b]. They answer by placing one of their cards face-up in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive! Every trade is in the open: all cards in trade areas are face-up. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the deck.\n- [b]Trade[/b]: drag a card from your hand onto another player to offer it. It goes into your [b]trade area[/b]. They answer by placing one of their cards in [i]their[/i] trade area - or decline - and you accept the pair or not. If you accept, your card goes to them [i]now[/i], but theirs stays in their trade area and only reaches you on [i]their[/i] next turn - when they may [b]deliver[/b] it or [b]break the deal[/b]. Trading partners can deceive! Every trade is in the open: everyone can see the cards in every trade area. If a deal is refused you may offer another deal, to the same or a different player, or draw a card instead.\n- If the draw pile runs out you can only trade, or skip your turn.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice. It needs Short + Long, and a test.\n- [b]Superpower[/b]: strike several countries.\n- An attack puts the Capability cards it needs on the table for all to see. An eliminated player's hand is revealed and set aside.")
 	_rules_h(vb, "Threats and disarming")
@@ -2351,10 +2440,11 @@ func _autotest() -> void:
 						hc.picked.emit(hc.cid, hc)
 						await get_tree().process_frame
 						await get_tree().process_frame
-						if _popup_press("OFFER"):
+						_close_popup()
+						var others := G.others(ME)
+						if _can_offer() and not others.is_empty():
+							_drop_offer(others[randi() % others.size()], {"cid": hc.cid})
 							acts.offer += 1
-						else:
-							_close_popup()
 						continue
 				if not btn.research.disabled:
 					btn.research.pressed.emit()
@@ -2421,6 +2511,89 @@ func _stage(np: String, bio: String, mine: Array, tested: bool) -> void:
 	G.log_msg("Staged position for screenshots.", "sys")
 	_render()
 	await get_tree().create_timer(0.5).timeout
+
+## Drives the real mouse path: press on a hand card, move, release over a seat (and over the trade-answer zone).
+func _mouse(pos: Vector2, pressed := false, button := false, motion := false, held := false) -> void:
+	if motion:
+		var mm := InputEventMouseMotion.new()
+		mm.position = pos
+		mm.global_position = pos
+		mm.relative = Vector2(8, 0)
+		mm.button_mask = MOUSE_BUTTON_MASK_LEFT if held else 0
+		Input.parse_input_event(mm)
+	if button:
+		var mb := InputEventMouseButton.new()
+		mb.position = pos
+		mb.global_position = pos
+		mb.button_index = MOUSE_BUTTON_LEFT
+		mb.pressed = pressed
+		mb.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+		Input.parse_input_event(mb)
+
+func _drag(from: Vector2, to: Vector2) -> void:
+	_mouse(from, false, false, true)
+	await get_tree().process_frame
+	_mouse(from, true, true)
+	await get_tree().process_frame
+	for i in range(1, 11):
+		_mouse(from.lerp(to, i / 10.0), false, false, true, true)
+		await get_tree().process_frame
+	await get_tree().create_timer(0.15).timeout
+	_mouse(to, false, true)
+	await get_tree().create_timer(0.3).timeout
+
+func _dragtest() -> void:
+	await get_tree().process_frame
+	var fails := 0
+	await _stage("4", "off", ["uranium", "refinement", "warhead", "testing", "short", "long"], false)
+	G.turn = 0
+	G.phase = "play"
+	_render()
+	await get_tree().create_timer(0.4).timeout
+	var seat1: Control = null
+	for n in board.find_children("*", "Control", true, false):
+		if n is DropTarget:
+			var txt := ""
+			for l in n.find_children("*", "Label", true, false):
+				txt += l.text
+			if "VOLKOV" in txt:
+				seat1 = n
+	var hc := _first_hand_card()
+	print("DRAGTEST seat=", seat1 != null, " card=", hc != null, " can_drag=", hc.can_drag if hc else null)
+	var before := ME.trade.size()
+	var log_before := G.log_entries.size()
+	var hand_before := ME.hand.size()
+	var hr := hc.get_global_rect()
+	await _drag(Vector2(hr.position.x + hr.size.x / 2.0, minf(hr.position.y + 30.0, 705.0)), seat1.get_global_rect().get_center())
+	await _shot("/tmp/gshots2/drag-after.png")
+	print("DRAGTEST offer: trade ", before, "->", ME.trade.size(), " hand ", hand_before, "->", ME.hand.size(), " prompt=", G.prompt.get("type", "-"), " modal=", modal != null, " toast/declined ok")
+	if G.log_entries.size() == log_before:
+		fails += 1
+		print("DRAGTEST FAIL: nothing happened")
+	# trade modal: drop a card in the answer zone
+	await _stage("4", "off", ["uranium", "short", "warhead"], false)
+	G.turn = 1
+	var offered = G.players[1].hand.pop_back()
+	offered.pub = true
+	G.players[1].trade.append(offered)
+	G.prompt = {"type": "trade", "player": ME, "from": G.players[1], "card_id": offered.id, "card_key": offered.key}
+	_render()
+	_trade_modal()
+	await get_tree().create_timer(0.5).timeout
+	var src: Control = null
+	var zone: Control = null
+	for n in modal.find_children("*", "Control", true, false):
+		if n is DragSrc and src == null:
+			src = n
+		if n is DropTarget:
+			zone = n
+	await _drag(src.get_global_rect().get_center(), zone.get_global_rect().get_center())
+	print("DRAGTEST answer: prompt=", G.prompt.get("type", "-"), " modal=", modal != null)
+	if G.prompt.get("type", "-") == "trade":
+		fails += 1
+		print("DRAGTEST FAIL: modal drop did nothing")
+	print("DRAGTEST DONE fails=", fails)
+	get_tree().quit(fails)
 
 func _shots() -> void:
 	var d := "/tmp/gshots2"
