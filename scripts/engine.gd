@@ -615,6 +615,7 @@ func renege(p: Player) -> bool:
 	_recall(p, int(d.pledge))
 	log_msg("%s BREAKS the deal with %s - %s is kept. Deceived!" % [p.name, by_id(d.from).name, "the pledged card"], "reveal")
 	_deal_outcome(p, by_id(d.from), false)
+	event.emit("renege", {"p": p, "to": by_id(d.from)})
 	_next_honour()
 	return true
 
@@ -1104,6 +1105,33 @@ func propose_ceasefire(proposer: Player) -> Dictionary:
 		var names: Array = refuses.map(func(p): return p.name)
 		log_msg("%s proposes to stop. %s refuse%s." % [proposer.name, " and ".join(names), "s" if refuses.size() == 1 else ""])
 	return {"agrees": agrees, "refuses": refuses, "blocked": false}
+
+# ---------------------------------------------------------------- debug (F9 in the game)
+## What AI player `p` knows and thinks: its hand, its traits, and how it sees everyone else.
+## Read-only; uses the same belief model the AI decides with.
+func debug_view(p: Player) -> Dictionary:
+	var B := belief(p)
+	var rows: Array = []
+	for x in players:
+		if x == p:
+			continue
+		var caps_est := 0.0
+		for k in CAPS:
+			caps_est += bp(B, x, k)
+		rows.append({
+			"name": x.name, "alive": x.alive, "human": x.human,
+			"threat": threat_on(B, x, p),            # how likely x can eliminate p soon
+			"ready": readiness(B, x),                # belief that x has tested / can test
+			"caps": caps_est,                        # expected number of Capabilities x holds
+			"trust": trust_of(p, x), "warmth": warmth(p, x), "grudge": grudge(p, x),
+			"standdown": ceasefire_score(p, x) if x.alive and p.alive else 0.0,
+			"trade": clampf(float(p.persona.trade) + 0.25 * threat_on(B, x, p) - 0.8 * grudge(p, x) + 0.6 * warmth(p, x), 0.0, 1.0),
+		})
+	var attacks: Array = []
+	for av in attack_types(p):
+		attacks.append(av.type)
+	return {"name": p.name, "persona": p.persona, "hand": p.hand.map(func(c): return c.key),
+		"can_test": can_test(p), "attacks": attacks, "rows": rows}
 
 # ---------------------------------------------------------------- driver
 ## What does the game need next? "over" | "prompt" | "human" | "ai"

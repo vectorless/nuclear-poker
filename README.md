@@ -19,6 +19,17 @@ Optional richer art: `python3 tools/meshy_cards.py` repaints them with Meshy's i
 (key read from `~/.secrets/meshy`; about 9 credits per image); the procedural versions are kept in
 `assets/ww2/procedural/`.
 
+## Sound and music
+`python3 tools/elevenlabs_sfx.py` makes the sound effects (assets/sfx/) and
+`python3 tools/elevenlabs_music.py` the four adaptive music layers (assets/music/: calm, uneasy, tense,
+crisis). Both read the ElevenLabs key from `--key-file PATH`, `$ELEVENLABS_API_KEY` or `~/.secrets/elevenlabs`.
+The game cross-fades the music layers as tension rises (tests, armed powers, threats, bloodshed) and falls
+back to built-in synthesised sounds when the files are missing.
+
+## Debug
+Press **F9** in a game to see what each AI holds and thinks: hand, persona, how threatened it feels by
+each player, its estimates of their arsenals, trust/alliances, stand-down leaning, and the draw pile.
+
 ## Layout
 - `scripts/engine.gd`  — rules + AI, no UI (class `NPGame`). A lobby server can run this headless.
 - `scripts/main.gd`    — all UI, built in code.

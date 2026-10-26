@@ -1,3 +1,6 @@
 .godot/
 build/
 *.tmp
+.secrets/
+*.key
+.el_key
