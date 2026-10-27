@@ -80,6 +80,8 @@ var sounds := {}
 var ambience: AudioStreamPlayer = null
 var drag_ghost: Control = null      # the picture that follows the pointer while dragging
 var zoom: TextureRect = null      # enlarged copy of the card under the pointer
+var zoom_last_key := ""           # the card it showed, and when it went (to re-show without a flicker)
+var zoom_last_ms := 0
 var betrayals := {}               # player id -> how many deals they have broken with you
 # touch screens (tablets, phones): taps are clicks, and touching stands in for hovering
 var touch := false
@@ -142,6 +144,8 @@ class HandCard extends Control:
 	var tw: Tween
 	var dragging := false
 	static var touch := false      # set by the game while the player is using a touch screen
+	static var hov_cid := -1       # the card that was lifted when the hand was last rebuilt, and when
+	static var hov_ms := 0
 	var press_ms := 0
 	func _get_drag_data(at: Vector2) -> Variant:
 		if not can_drag:
@@ -162,6 +166,9 @@ class HandCard extends Control:
 		modulate.a = 0.0
 		return {"cid": cid}
 	func _notification(what: int) -> void:
+		if what == NOTIFICATION_EXIT_TREE and z_index == 20:
+			hov_cid = cid
+			hov_ms = Time.get_ticks_msec()
 		if what == NOTIFICATION_DRAG_END and dragging:
 			dragging = false
 			# dropped somewhere that took it: stay gone (the board is about to update); otherwise come back
@@ -177,6 +184,12 @@ class HandCard extends Control:
 			tw.kill()
 		z_index = 20 if on else 0
 		if face == null:
+			return
+		if on and cid == hov_cid and Time.get_ticks_msec() - hov_ms < 400:
+			# the same card under a still mouse after a rebuild: lift it at once, no second pop
+			face.pivot_offset = Vector2(size.x / 2.0, size.y)
+			face.position.y = -14.0
+			face.scale = Vector2.ONE * 1.35
 			return
 		face.pivot_offset = Vector2(size.x / 2.0, size.y)      # grow up and out from the bottom edge
 		tw = create_tween().set_parallel(true)
@@ -848,12 +861,17 @@ func _zoom_show(src: Control, key: String, by_touch := false) -> void:
 		x = r.position.x - zw - 12.0
 	var y := clampf(r.get_center().y - zh / 2.0, 8.0, vp.y - zh - 8.0)
 	zoom.position = Vector2(maxf(8.0, x), y)
-	zoom.modulate.a = 0.0
 	fx_root.add_child(zoom)
+	var again: bool = key == zoom_last_key and Time.get_ticks_msec() - zoom_last_ms < 400
+	zoom_last_key = key
+	if again:
+		return      # the same card again straight after a rebuild: no fade, no flicker
+	zoom.modulate.a = 0.0
 	zoom.create_tween().tween_property(zoom, "modulate:a", 1.0, 0.1)
 
 func _zoom_hide() -> void:
 	if zoom != null and is_instance_valid(zoom):
+		zoom_last_ms = Time.get_ticks_msec()
 		zoom.queue_free()
 	zoom = null
 
@@ -1517,7 +1535,7 @@ func _on_event(t: String, d: Dictionary) -> void:
 				snd("your_turn")
 		"over":
 			_ambience(false)
-			snd("standdown" if d.kind == "ceasefire" else "game_over")
+			snd("standdown" if d.kind in ["ceasefire", "stalemate"] else "game_over")
 
 # ====================================================================== driver
 func _pump() -> void:
@@ -1598,6 +1616,19 @@ func _render() -> void:
 	_render_side()
 	if touch:
 		_touch_pass(board)
+	else:
+		_refresh_hover.call_deferred()
+
+## The board is rebuilt whenever the game moves on, so the card under a still mouse is a new one
+## that has not been told it is hovered. Nudge the pointer (a zero-length move) so it is.
+func _refresh_hover() -> void:
+	if touch or get_viewport().gui_is_dragging() or DisplayServer.get_name() == "headless":
+		return
+	var ev := InputEventMouseMotion.new()
+	ev.position = get_viewport().get_mouse_position()
+	ev.global_position = ev.position
+	ev.button_mask = Input.get_mouse_button_mask()
+	get_viewport().push_input(ev)
 	_music_update()
 	if debug_panel != null:
 		_build_debug()
@@ -2726,6 +2757,10 @@ func _end_modal() -> void:
 		good = w == ME
 		title = "You are the last one standing" if good else "%s is the last power standing" % w.name
 		sub = "You survived. Look at what it cost." if good else "The rest of the table is gone."
+	elif r.kind == "stalemate":
+		title = "Stalemate"
+		sub = "The draw pile ran dry and nobody could - or would - move again. %d of %d powers survive." % [alive.size(), G.players.size()]
+		good = ME.alive
 	elif alive.size() == G.players.size():
 		title = "Deterrence held"
 		sub = "Nobody died. That is the only winning move."
@@ -3279,6 +3314,32 @@ func _dragtest() -> void:
 	if ME.hand.size() != n_before or back != ME.hand.size():
 		fails += 1
 		print("DRAGTEST FAIL: a cancelled drag did not put the card back")
+	# hovering survives the board being rebuilt (as it is when the turn moves on)
+	await _stage("4", ["uranium", "short", "warhead"], false)
+	G.turn = 0
+	G.phase = "play"
+	_render()
+	await get_tree().create_timer(0.3).timeout
+	board_scroll.scroll_vertical = 10000
+	await get_tree().create_timer(0.2).timeout
+	var hh := _first_hand_card()
+	var hcid := hh.cid
+	var hp2 := hh.get_global_rect().position + Vector2(10, 40)
+	Input.warp_mouse(hp2)      # the real pointer: a rebuilt board looks for it there
+	_mouse(hp2, false, false, true)
+	await get_tree().create_timer(0.3).timeout
+	_render()      # the turn changes: everything is rebuilt under the still mouse
+	for i in range(4):
+		await get_tree().process_frame
+	await get_tree().create_timer(0.2).timeout
+	var lifted := false
+	for n in board.find_children("*", "", true, false):
+		if n is HandCard and n.cid == hcid and n.z_index == 20 and n.face != null and n.face.scale.x > 1.3:
+			lifted = true
+	print("DRAGTEST hover kept after a rebuild: ", lifted)
+	if not lifted:
+		fails += 1
+		print("DRAGTEST FAIL: the hovered card dropped when the board was rebuilt")
 	print("DRAGTEST DONE fails=", fails)
 	get_tree().quit(fails)
 

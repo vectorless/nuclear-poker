@@ -47,5 +47,17 @@ func _init() -> void:
 	g = game([["short", "long", "uranium"], ["uranium"], ["uranium"], ["uranium"]])
 	me = g.players[0]
 	check(g.attack_types(me).is_empty() and not g.can_disarm(me), "untested: no attacks, no disarming")
+	# the draw pile is empty and the last two powers can neither test, strike nor usefully trade
+	g = game([["uranium"], ["uranium", "uranium"], ["refinement", "refinement"], []])
+	g.kill([g.players[0], g.players[3]], {})
+	g.out.append_array(g.deck)
+	g.deck.clear()
+	g.turn = 1
+	g.phase = "play"
+	var steps := 0
+	while not g.over and steps < 2000:
+		g.step()
+		steps += 1
+	check(g.over and g.result.kind == "stalemate" and g.turn_no < 30, "two powers with nothing left to do end in a stalemate (turn %d, %s)" % [g.turn_no, g.result.get("kind", "-")])
 	print("RULES TEST ", "ALL OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)

@@ -71,6 +71,12 @@ var trust: Dictionary = {}
 # Voluntary disarmament. pid -> turn_no it disarmed of its own accord; cleared if it re-arms by
 # attacking or threatening again (a breach of faith).
 var disarmed: Dictionary = {}
+# Stalemate: the turn_no at which the table last changed (a draw, test, attack, death, completed or
+# broken deal, disarmament). With the draw pile empty and nothing changing for a full round, it ends.
+var last_progress: int = 1
+
+func _progress() -> void:
+	last_progress = turn_no
 
 # ---------------------------------------------------------------- helpers
 func _shuffle(arr: Array) -> void:
@@ -266,6 +272,7 @@ func research(p: Player) -> bool:
 	var c = deck.pop_back()
 	c.pub = false
 	p.hand.append(c)
+	_progress()
 	log_msg("%s researches (draws a card)." % p.name)
 	event.emit("draw", {"p": p, "c": c})
 	return true
@@ -300,6 +307,7 @@ func do_test(p: Player) -> bool:
 				p.table.append(c)
 				break
 	p.tested = true
+	_progress()
 	log_msg("%s performs a NUCLEAR TEST — all four Technologies on the table." % p.name, "test")
 	event.emit("test", {"p": p})
 	return true
@@ -358,6 +366,7 @@ func _show_cards(p: Player, keys: Array) -> Array:
 
 ## list: [{p, type, target}] — all validated against the pre-state; resolved together.
 func perform_attacks(list: Array) -> void:
+	_progress()
 	var victims := {}   # victim id -> attacker
 	for a in list:
 		_breach_of_faith(a.p)
@@ -488,6 +497,15 @@ func end_turn() -> void:
 	_void_debts()
 	if not _debts_of(cur()).is_empty():
 		phase = "honour"
+	if deck.is_empty() and not over:
+		# Stalemate: nothing left to draw, and a full round (two when you are still playing, so you
+		# get your chance) has gone by without anyone testing, striking, trading or disarming.
+		var al := alive_list()
+		var rounds := 2 if al.any(func(x): return x.human) else 1
+		if turn_no - last_progress > al.size() * rounds:
+			log_msg("The draw pile is empty and nothing has changed for a full round: no one can - or will - make another move. Stalemate.")
+			end_game("stalemate")
+			return
 	if turn_no > 500 and not over:
 		log_msg("After a very long standoff, the players agree to stop.")
 		end_game("ceasefire")
@@ -612,6 +630,7 @@ func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
 			p.trade.pop_at(i)
 			break
 	x.pub = false
+	_progress()
 	_favour(t, p, x)
 	t.hand.append(x)
 	debts.append({"from": p.id, "to": t.id, "got": x.id, "pledge": y.id})
@@ -654,6 +673,7 @@ func honour(p: Player) -> bool:
 	var y = _trade_card(p, int(d.pledge))
 	var to := by_id(d.from)
 	debts.erase(d)
+	_progress()
 	if y != null:
 		p.trade.erase(y)
 		y.pub = false
@@ -674,6 +694,7 @@ func renege(p: Player) -> bool:
 		return false
 	var d: Dictionary = ds[0]
 	debts.erase(d)
+	_progress()
 	_recall(p, int(d.pledge))
 	log_msg("%s BREAKS the deal with %s and keeps the card promised in return. Deceived!" % [p.name, by_id(d.from).name], "broken")
 	_deal_outcome(p, by_id(d.from), false)
@@ -800,6 +821,7 @@ func _resolve_threat(p: Player, t: Player, comply: bool) -> void:
 
 ## Shuffle every Capability card (hand and table) back into the deck. Returns their names.
 func _return_caps(t: Player) -> Array:
+	_progress()
 	var names: Array = []
 	for arr in [t.hand, t.table]:
 		for i in range(arr.size() - 1, -1, -1):
