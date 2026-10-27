@@ -2703,7 +2703,7 @@ func _card_row(vb: VBoxContainer, keys: Array, notes: Array) -> void:
 	vb.add_child(fl)
 
 func _rules_classic(vb: VBoxContainer) -> void:
-	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, or when everyone agrees to stand down.")
+	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, when everyone agrees to stand down - or in a [b]stalemate[/b], when the draw pile is empty and a full round passes without anyone drawing, testing, striking, trading or disarming.")
 	_rules_h(vb, "Goal")
 	_rules_p(vb, "You are a country trying to become a [b]Nuclear Superpower[/b]. First [b]test a nuclear weapon[/b] with the four Technology cards, then collect the four Capability cards.")
 	_rules_h(vb, "Technology cards - the Nuclear Test")
