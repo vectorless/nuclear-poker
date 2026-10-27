@@ -19,6 +19,8 @@ config/description="A fun, scary teaching game about nuclear strategy. Unofficia
 run/main_scene="res://scripts/main.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
+boot_splash/bg_color=Color(0.11, 0.114, 0.086, 1)
+boot_splash/image="res://assets/ui/splash.png"
 
 [display]
 
