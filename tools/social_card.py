@@ -4,7 +4,8 @@
     python3 tools/social_card.py      ->  web/social.jpg (1200 x 630)
 
 Built from the game's own art: the campaign-map table, the stencil title and a fan of painted cards.
-The Pages workflow copies it next to index.html; the meta tags are in export_presets.cfg (head_include).
+The meta tags (export_presets.cfg, head_include) load it from the repo on GitHub (raw.githubusercontent.com),
+so it is live as soon as it is pushed.
 """
 import math, os
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
