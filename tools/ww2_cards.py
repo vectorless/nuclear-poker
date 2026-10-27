@@ -4,6 +4,9 @@
     python3 tools/ww2_cards.py            (run from the project folder; needs Pillow + numpy)
     python3 tools/ww2_cards.py --art poster   use the painted pictures in assets/ww2/art/poster/
                                               (from tools/meshy_card_art.py) instead of the ink icons
+    python3 tools/ww2_cards.py --art painted --burnt   also the burnt copies shown for eliminated players
+                                              (assets/ww2/burnt/, from the burn marks in assets/ww2/art/burn/)
+    python3 tools/ww2_cards.py --only-burnt   only the burnt copies, from the cards as they are
 
 Reads the icon shapes from the print-and-play card art in assets/*.png and redraws every card as a
 1940s field-manual / dossier card: aged paper, olive-drab header, stencil title, typewriter rules text
@@ -280,17 +283,61 @@ def make_table():
     return img
 
 
+def burn_card(card, burn, flip=False):
+    """Scorch a finished card with a photographed burn (a burnt sheet on a green screen): the green -
+    burnt away - becomes transparent, the sheet's browns and blacks are multiplied into the card."""
+    b = np.asarray(burn.convert("RGB")).astype(float)
+    r, g, bl = b[..., 0], b[..., 1], b[..., 2]
+    green = (g > 120) & (g > r * 1.4) & (g > bl * 1.4)
+    ys, xs = np.nonzero(~green)
+    im = burn.convert("RGB").crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
+    if flip:
+        im = im.transpose(Image.FLIP_LEFT_RIGHT)
+    im = im.resize(card.size, Image.LANCZOS)
+    b = np.asarray(im).astype(float)
+    r, g, bl = b[..., 0], b[..., 1], b[..., 2]
+    gone = ((g > 120) & (g > r * 1.4) & (g > bl * 1.4)).astype(float)
+    b[..., 1] = np.minimum(g, np.maximum(r, bl))      # take the green spill off the charred rim
+    white = np.percentile(b[gone < 0.5].reshape(-1, 3), 92, axis=0)
+    tone = np.clip(b / white, 0.0, 1.0)
+    c = np.asarray(card.convert("RGBA")).astype(float)
+    c[..., :3] *= tone
+    keep = np.asarray(Image.fromarray(((1.0 - gone) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(1.2))).astype(float) / 255.0
+    c[..., 3] *= keep
+    out = Image.fromarray(np.clip(c, 0, 255).astype(np.uint8), "RGBA")
+    return out.resize((W // 2, H // 2), Image.LANCZOS)      # only ever shown small
+
+
+def make_burnt():
+    src = os.path.join(OUT, "art", "burn")
+    burns = [Image.open(os.path.join(src, f)) for f in sorted(os.listdir(src)) if f.endswith(".png")] if os.path.isdir(src) else []
+    if not burns:
+        print("no burn marks in", src, "- run tools/meshy_card_art.py --burn")
+        return
+    dst = os.path.join(OUT, "burnt")
+    os.makedirs(dst, exist_ok=True)
+    for i, k in enumerate(CARDS):
+        card = Image.open(os.path.join(OUT, k + ".png"))
+        burn_card(card, burns[i % len(burns)], flip=(i // len(burns)) % 2 == 1).save(os.path.join(dst, k + ".png"))
+    print("wrote", dst)
+
+
 def main():
     global ART
     import sys
     if "--art" in sys.argv:
         ART = sys.argv[sys.argv.index("--art") + 1]
+    if "--only-burnt" in sys.argv:      # just redo the burnt copies from the finished cards
+        make_burnt()
+        return
     os.makedirs(OUT, exist_ok=True)
     for i, k in enumerate(CARDS):
         make_card(k, i).save(os.path.join(OUT, k + ".png"))
     make_back().save(os.path.join(OUT, "back.png"))
     make_table().convert("RGB").save(os.path.join(OUT, "table.jpg"), quality=86)
     print("wrote", OUT)
+    if "--burnt" in sys.argv:
+        make_burnt()
 
 
 if __name__ == "__main__":

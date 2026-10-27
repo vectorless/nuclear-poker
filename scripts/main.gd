@@ -31,6 +31,7 @@ var HEAD: Font
 var ui_theme: Theme
 var MONO: Font
 var TEX := {}
+var TEXB := {}      # burnt copies of the cards, for an eliminated player's revealed hand
 
 var cfg := {"name": "You", "players": "3", "p1": "random", "p2": "random", "p3": "random", "p4": "random", "fullscreen": false}
 var G: NPGame = null
@@ -728,9 +729,9 @@ func _box(parent: Control, title: String) -> VBoxContainer:
 	parent.add_child(pc)
 	return vb
 
-func _tex(key: String, w: float) -> TextureRect:
+func _tex(key: String, w: float, burnt := false) -> TextureRect:
 	var t := TextureRect.new()
-	t.texture = TEX[key]
+	t.texture = TEXB.get(key, TEX[key]) if burnt else TEX[key]
 	t.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	t.stretch_mode = TextureRect.STRETCH_SCALE
 	t.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
@@ -757,7 +758,7 @@ func _zoom_show(src: Control, key: String, by_touch := false) -> void:
 	var zw := 210.0
 	var zh := zw * 430.0 / 330.0
 	zoom = TextureRect.new()
-	zoom.texture = TEX[key]
+	zoom.texture = (src as TextureRect).texture if src is TextureRect else TEX[key]
 	zoom.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	zoom.stretch_mode = TextureRect.STRETCH_SCALE
 	zoom.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
@@ -804,8 +805,8 @@ func _portrait(p: NPGame.Player, s: float) -> Control:
 		t.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 		t.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		t.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		if not p.alive:
-			t.modulate = Color(0.6, 0.55, 0.5)
+		if not p.alive and not ResourceLoader.exists(_portrait_path(p, true)):
+			t.modulate = Color(0.6, 0.55, 0.5)      # no skeleton for this one: just fade the photo
 		frame.add_child(t)
 	else:
 		var l := _lbl(p.name.split(" ")[-1].left(1), int(s * 0.55), Color("#2b241a"), HEAD)
@@ -815,12 +816,18 @@ func _portrait(p: NPGame.Player, s: float) -> Control:
 	frame.tooltip_text = p.name
 	return frame
 
-## An AI's head-shot for its seat (assets/portraits/<persona>_head.png), or null.
+## An AI's head-shot for its seat (assets/portraits/<persona>_head.png; <persona>_dead_head.png, its
+## skeleton, once it is eliminated), or null.
 func _portrait_tex(p: NPGame.Player) -> Texture2D:
 	if p.human:
 		return null
-	var path := "res://assets/portraits/%s_head.png" % str(p.persona.get("id", ""))
+	if not p.alive and ResourceLoader.exists(_portrait_path(p, true)):
+		return load(_portrait_path(p, true))      # eliminated: their skeleton, in the same uniform
+	var path := _portrait_path(p, false)
 	return load(path) if ResourceLoader.exists(path) else null
+
+func _portrait_path(p: NPGame.Player, dead: bool) -> String:
+	return "res://assets/portraits/%s%s_head.png" % [str(p.persona.get("id", "")), "_dead" if dead else ""]
 
 func _persona_color(p: NPGame.Player) -> Color:
 	return Color(p.persona.color) if not p.persona.is_empty() else C_GREEN
@@ -838,6 +845,8 @@ func _ready() -> void:
 	ui_theme = th
 	for k in ORDER:
 		TEX[k] = load("res://assets/ww2/%s.png" % k)
+		if ResourceLoader.exists("res://assets/ww2/burnt/%s.png" % k):
+			TEXB[k] = load("res://assets/ww2/burnt/%s.png" % k)
 	CardBack.tex = load("res://assets/ww2/back.png")
 	_load_cfg()
 	if bool(cfg.fullscreen) and not OS.has_feature("web") and DisplayServer.get_name() != "headless":
@@ -1685,7 +1694,9 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	_pass_through(pc)
 	return pc
 
-func _mini_pub(key: String) -> Control:
+func _mini_pub(key: String, burnt := false) -> Control:
+	if burnt:
+		return _tex(key, mini_w, true)      # the burnt card's own ragged edge is its frame
 	var pc := PanelContainer.new()
 	pc.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), C_AMBER, 2, 5, 0))
 	pc.add_child(_tex(key, mini_w))
@@ -1731,7 +1742,7 @@ func _seat(p: NPGame.Player) -> Control:
 	var unk := 0
 	for c in p.hand:
 		if c.pub:
-			hand_items.append(_mini_pub(c.key))
+			hand_items.append(_mini_pub(c.key, not p.alive))      # a destroyed power's hand lies burnt and singed
 		else:
 			unk += 1
 	var backs: Array = []
@@ -1742,7 +1753,7 @@ func _seat(p: NPGame.Player) -> Control:
 	vb.add_child(_zone("Hand · %d card%s" % [p.hand.size(), "" if p.hand.size() == 1 else "s"], backs + hand_items, "(empty)"))
 	var tbl: Array = []
 	for c in p.table:
-		tbl.append(_tex(c.key, mini_w))
+		tbl.append(_tex(c.key, mini_w, not p.alive))
 	vb.add_child(_zone("On the table", tbl, "nothing yet"))
 	vb.add_child(_trade_zone(p, mini_w))
 	if not p.alive:

@@ -9,6 +9,8 @@ Key lookup: --key-file PATH, else $MESHY_API_KEY, else .secrets/meshy (in the pr
 else ~/.secrets/meshy. Never commit the key. Output: assets/portraits/<persona>.png (square), plus
 <persona>_head.png: a head-and-shoulders crop, toned down and vignetted into the panel colour, which the
 game shows beside each AI's name (a stamped initial when it is missing). `--heads` redoes only the crops.
+`--dead` turns each portrait into its skeleton (Meshy image-to-image, same uniform and pose):
+<persona>_dead.png and <persona>_dead_head.png, shown in the seat of an eliminated power.
 Style matches the cards: a 1940s field-manual / dossier photograph. Uniforms are inspired by different
 world powers but carry no real flags, insignia or emblems, and depict no real person.
 """
@@ -67,9 +69,25 @@ HEAD_BOX = {"hawk": (0.28, 0.10, 0.76, 0.58), "dove": (0.29, 0.13, 0.77, 0.61),
             "opp": (0.26, 0.12, 0.74, 0.60), "wild": (0.28, 0.12, 0.76, 0.60)}
 
 
-def make_head(name):
-    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+DEAD_PROMPT = ("Turn this person into a skeleton: keep exactly the same uniform, hat, clothing, pose, framing, "
+               "lighting, backdrop and the same aged sepia dossier-photograph style, but the head is a bare "
+               "grinning human skull with empty eye sockets and any visible hands are bones. Grim, not gory: "
+               "no blood, no flesh. No text, no watermark.")
+I2I = "https://api.meshy.ai/openapi/v1/image-to-image"
+
+
+def make_dead(key, name, model):
+    """The eliminated version of a portrait: the same figure as a skeleton."""
+    import base64
     src = os.path.join(OUT, name + ".png")
+    uri = "data:image/png;base64," + base64.b64encode(open(src, "rb").read()).decode()
+    body = {"ai_model": model, "prompt": DEAD_PROMPT, "reference_image_urls": [uri], "aspect_ratio": "1:1"}
+    return req(key, "POST", I2I, body)["result"]
+
+
+def make_head(name, suffix=""):
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+    src = os.path.join(OUT, name + suffix + ".png")
     if not os.path.exists(src):
         return
     im = Image.open(src).convert("RGB")
@@ -80,7 +98,7 @@ def make_head(name):
     mask = Image.new("L", (256, 256), 0)
     ImageDraw.Draw(mask).ellipse((34, 26, 222, 250), fill=255)
     mask = mask.filter(ImageFilter.GaussianBlur(30)).point(lambda v: int(70 + 185 * v / 255))
-    Image.composite(im, Image.new("RGB", (256, 256), (30, 32, 22)), mask).save(os.path.join(OUT, name + "_head.png"))
+    Image.composite(im, Image.new("RGB", (256, 256), (30, 32, 22)), mask).save(os.path.join(OUT, name + suffix + "_head.png"))
 
 
 def main():
@@ -88,9 +106,39 @@ def main():
     if "--heads" in args:
         for name in PEOPLE:
             make_head(name)
+            make_head(name, "_dead")
         print("heads done")
         return
     key = find_key(args)
+    if "--dead" in args:
+        args.remove("--dead")
+        force = "--force" in args
+        if force:
+            args.remove("--force")
+        import tempfile
+        from PIL import Image
+        jobs = {}
+        for name in args or list(PEOPLE):
+            if os.path.exists(os.path.join(OUT, name + "_dead.png")) and not force:
+                print(name, "dead exists")
+                continue
+            jobs[name] = make_dead(key, name, "nano-banana-pro")
+        for name, tid in jobs.items():
+            while True:
+                t = req(key, "GET", "%s/%s" % (I2I, tid))
+                if t["status"] in ("SUCCEEDED", "FAILED", "CANCELED"):
+                    break
+                time.sleep(4)
+            if t["status"] != "SUCCEEDED" or not t.get("image_urls"):
+                print(name, "FAILED", t.get("task_error"))
+                continue
+            tmp = os.path.join(tempfile.gettempdir(), "meshy_dead_%s.dl" % name)
+            urllib.request.urlretrieve(t["image_urls"][0], tmp)
+            Image.open(tmp).convert("RGB").resize((512, 512), Image.LANCZOS).save(os.path.join(OUT, name + "_dead.png"))
+            os.remove(tmp)
+            make_head(name, "_dead")
+            print(name, "dead ok", "credits", t.get("consumed_credits"), flush=True)
+        return
     force = "--force" in args
     if force:
         args.remove("--force")

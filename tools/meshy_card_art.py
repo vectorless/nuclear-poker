@@ -6,6 +6,7 @@
     python3 tools/meshy_card_art.py --style poster --force long
     python3 tools/ww2_cards.py --art poster                   # build the cards with those pictures
     python3 tools/meshy_card_art.py --map                     # the side-panel map's painted land and sea
+    python3 tools/meshy_card_art.py --burn                    # burn marks for eliminated players' cards
 
 Key lookup: --key-file PATH, else $MESHY_API_KEY, else .secrets/meshy (git-ignored), else ~/.secrets/meshy.
 Output: assets/ww2/art/<style>/<card>.png, a wide picture (16:9). Only the picture comes from Meshy:
@@ -59,6 +60,13 @@ MAP = {
 }
 
 
+BURN = ("Photographed flat from directly above: a single sheet of plain off-white paper, badly burned. Ragged "
+        "charred black edges eaten away all round, one burnt-through hole near a corner with a glowing-brown "
+        "rim, brown scorch marks and soot creeping in from the edges, the middle of the sheet still clean and "
+        "blank. The sheet fills most of the frame and lies on a solid flat pure bright green background "
+        "(chroma key), visible through the burnt edges and the hole. No text, no shadows, no other objects.")
+
+
 def find_key(args):
     if "--key-file" in args:
         i = args.index("--key-file")
@@ -107,18 +115,29 @@ def main():
     maps = "--map" in args
     if maps:
         args.remove("--map")
+    burn = "--burn" in args
+    if burn:
+        args.remove("--burn")
     if style not in STYLES:
         sys.exit("styles: " + ", ".join(STYLES))
     out = os.path.join(ROOT, "assets", "ui") if maps else os.path.join(OUT, style)
     os.makedirs(out, exist_ok=True)
     jobs = {}
-    for name in args or list(MAP if maps else SUBJECTS):          # start them all, then collect
+    if burn:
+        out = os.path.join(ROOT, "assets", "ww2", "art", "burn")
+        os.makedirs(out, exist_ok=True)
+    for name in args or (["burn_1", "burn_2"] if burn else list(MAP if maps else SUBJECTS)):     # start them all, then collect
         path = os.path.join(out, name + (".jpg" if maps else ".png"))
         if os.path.exists(path) and not force:
             print(name, "exists")
             continue
-        prompt = MAP[name] + " " + MAP_COMMON if maps else SUBJECTS[name] + " " + STYLES[style] + " " + COMMON
-        body = {"ai_model": model, "prompt": prompt, "aspect_ratio": "16:9"}
+        if burn:
+            prompt = BURN
+        elif maps:
+            prompt = MAP[name] + " " + MAP_COMMON
+        else:
+            prompt = SUBJECTS[name] + " " + STYLES[style] + " " + COMMON
+        body = {"ai_model": model, "prompt": prompt, "aspect_ratio": "3:4" if burn else "16:9"}
         jobs[name] = req(key, "POST", API, body)["result"]
     from PIL import Image
     for name, tid in jobs.items():
@@ -141,6 +160,9 @@ def main():
             im.save(os.path.join(out, name + ".png"))
         os.remove(tmp)
         print(name, "ok", "credits", t.get("consumed_credits"), flush=True)
+    if burn:
+        print("done - now: python3 tools/ww2_cards.py --art painted --burnt")
+        return
     print("done - reopen the project in Godot to import the map" if maps else
           "done - now: python3 tools/ww2_cards.py --art " + style)
 
