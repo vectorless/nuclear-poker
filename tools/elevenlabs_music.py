@@ -32,6 +32,16 @@ TRACKS = {
 }
 
 
+# One-off pieces, not part of the adaptive layers: their own prompt and length, played once.
+ONESHOT = {
+    "funeral": ("Dark, throbbing funeral march after a nuclear strike: very slow, 54 BPM, a heavy timpani and bass "
+                "drum pulse like a slow heartbeat, a muffled snare with the snares off, low brass and tuba playing a "
+                "mournful dirge in D minor over deep sustained cellos and contrabassoon, a distant tolling bell. "
+                "1940s orchestral recording, warm tape hiss. Instrumental, no vocals, no choir. It swells once, "
+                "then fades away to silence at the end.", 40000),
+}
+
+
 def normalize(path, lufs):
     """Level the file to a target loudness with ffmpeg (if installed), so sounds sit together."""
     import shutil, subprocess
@@ -66,15 +76,18 @@ def main():
         i = args.index("--length")
         length = int(args[i + 1])
         del args[i:i + 2]
-    names = args or list(TRACKS)
+    names = args or list(TRACKS) + list(ONESHOT)
     os.makedirs(OUT, exist_ok=True)
     for name in names:
         path = os.path.join(OUT, name + ".mp3")
         if os.path.exists(path) and not force:
             print(name, "exists")
             continue
-        body = json.dumps({"prompt": TRACKS[name] + " " + PALETTE, "music_length_ms": length,
-                           "force_instrumental": True}).encode()
+        if name in ONESHOT:
+            prompt, ms = ONESHOT[name]
+        else:
+            prompt, ms = TRACKS[name] + " " + PALETTE, length
+        body = json.dumps({"prompt": prompt, "music_length_ms": ms, "force_instrumental": True}).encode()
         for attempt in range(3):
             t0 = time.time()
             req = urllib.request.Request(API, data=body, headers={"xi-api-key": key, "Content-Type": "application/json"},

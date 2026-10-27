@@ -32,6 +32,9 @@ SFX = {
     "disarm": ("Heavy metal ammunition crates set down on a concrete floor, chains rattling, a lock clicking shut.", 2.0, False),
     "standdown": ("Distant church bells ringing slowly in a quiet town after war, peaceful, birds faintly.", 4.0, False),
     "game_over": ("A lone distant bugle holding one long mournful note over wind, fading away.", 4.0, False),
+    "screams": ("Distant crowd of many people screaming in terror and panic across a city just after a huge "
+                "explosion, wailing and crying out, echoing between ruined buildings, wind and falling debris, slowly fading.",
+                6.0, False),
     "ambience": ("WWII underground war room ambience: distant teleprinters clattering, faint ventilation hum, "
                  "occasional muffled radio crackle, very calm and low. Seamless loop.", 20.0, True),
 }
@@ -39,7 +42,7 @@ SFX = {
 
 # target loudness (LUFS) per sound; everything else -18
 LEVEL = {"trade_offer": -25, "click": -24, "draw": -24, "deal": -21, "your_turn": -21, "trade_counter": -21,
-         "attack": -16, "death": -16, "test": -16, "ambience": -30}
+         "attack": -16, "death": -16, "test": -16, "screams": -19, "ambience": -30}
 
 def normalize(path, lufs):
     """Level the file to a target loudness with ffmpeg (if installed), so sounds sit together."""

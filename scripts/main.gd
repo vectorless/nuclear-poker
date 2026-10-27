@@ -93,6 +93,7 @@ var turn_overlay: Control = null  # "turn your device sideways" on a portrait sc
 var debug_panel: Control = null      # F9: what the AI players know and think
 var music: Array = []             # one player per tension level, all running in sync
 var music_level := -1
+var funeral: AudioStreamPlayer = null      # after a nuclear strike: a funeral march, over the music
 var music_hold := 0
 var music_on := true
 const MUSIC_LEVELS := ["calm", "uneasy", "tense", "crisis"]
@@ -952,7 +953,7 @@ func _make_sound(kind: String) -> AudioStreamWAV:
 ## Sound effects: assets/sfx/<name>.mp3 (made by tools/elevenlabs_sfx.py) when present,
 ## otherwise a synthesised fallback for the core four. Missing sounds are simply silent.
 const SFX_NAMES := ["draw", "click", "your_turn", "trade_offer", "trade_counter", "deal", "broken", "threat",
-	"test", "attack", "death", "disarm", "standdown", "game_over"]
+	"test", "attack", "death", "disarm", "standdown", "game_over", "screams"]
 const SFX_VOL := {}      # the files are loudness-levelled by the generator; per-sound trims go here
 
 func _build_sounds() -> void:
@@ -971,6 +972,13 @@ func _build_sounds() -> void:
 		add_child(p)
 		sounds[k] = p
 	_build_music()
+	if ResourceLoader.exists("res://assets/music/funeral.mp3"):
+		funeral = AudioStreamPlayer.new()
+		funeral.stream = load("res://assets/music/funeral.mp3")
+		add_child(funeral)
+		funeral.finished.connect(func():
+			music_level = -1      # the march is over: bring the right music layer back in
+			_music_update())
 	if ResourceLoader.exists("res://assets/sfx/ambience.mp3"):
 		var amb: AudioStream = load("res://assets/sfx/ambience.mp3")
 		if amb is AudioStreamMP3:
@@ -1024,8 +1032,12 @@ func _music_update() -> void:
 	if not playing:
 		for p in music:
 			p.stop()
+		if funeral != null:
+			funeral.stop()
 		music_level = -1
 		return
+	if funeral != null and funeral.playing:
+		return      # the funeral march has the floor; the layers come back when it ends
 	if not music[0].playing:
 		for p in music:
 			p.volume_db = -80.0
@@ -1057,6 +1069,24 @@ func _ambience(on: bool) -> void:
 			ambience.play()
 	else:
 		ambience.stop()
+
+## A nuclear strike has killed: screams as the blast dies away, then a dark, throbbing funeral march
+## that takes over from the music for a while. Strikes in quick succession share one march.
+func _lament() -> void:
+	if muted or DisplayServer.get_name() == "headless":
+		return
+	await get_tree().create_timer(1.2).timeout
+	snd("screams")
+	if funeral == null or funeral.playing or not music_on:
+		return
+	await get_tree().create_timer(4.0).timeout
+	if muted or funeral.playing or G == null or not game_root.visible:
+		return
+	for p in music:
+		create_tween().tween_property(p, "volume_db", -80.0, 2.0)
+	funeral.volume_db = -30.0
+	funeral.play()
+	create_tween().tween_property(funeral, "volume_db", MUSIC_DB + 2.0, 2.5).set_trans(Tween.TRANS_SINE)
 
 func snd(kind: String) -> void:
 	if muted or not sounds.has(kind) or DisplayServer.get_name() == "headless":
@@ -1383,6 +1413,8 @@ func _on_event(t: String, d: Dictionary) -> void:
 			_fx("You are eliminated" if d.p == ME else d.p.name + " eliminated", "death")
 			snd("death")
 			_shake()
+			if d.get("by", null) != null:
+				_lament()
 		"threat":
 			snd("threat")
 			_toast("%s threatens %s!" % [d.from.name, d.to.name])
