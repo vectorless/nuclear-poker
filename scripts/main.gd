@@ -959,7 +959,9 @@ func _ready() -> void:
 	if DisplayServer.is_touchscreen_available():
 		_set_touch(true)      # until a real mouse moves
 	_check_orientation()
-	if "--touchtest" in OS.get_cmdline_user_args():
+	if "--readme-shot" in OS.get_cmdline_user_args():
+		_readme_shot.call_deferred()
+	elif "--touchtest" in OS.get_cmdline_user_args():
 		_touchtest.call_deferred()
 	elif "--autotest" in OS.get_cmdline_user_args():
 		_autotest.call_deferred()
@@ -1875,12 +1877,48 @@ func _reading_time() -> float:
 
 ## While the AIs play, the banner reports the move just made (the latest line of the event log)
 ## instead of a generic "thinking...".
+## The log is written in the third person ("Volkov offers Okafor a card"). When your callsign is
+## "You", put your own lines into the second person: "You answer", "your next turn", "offers you".
+func _you(t: String) -> String:
+	if ME == null or ME.name != "You":
+		return t
+	var rx := RegEx.create_from_string("\\bYou's\\b")
+	t = rx.sub(t, "your", true)
+	t = RegEx.create_from_string("(^|[.!?] )your\\b").sub(t, "$1Your", true)
+	var verb := RegEx.create_from_string("\\bYou ([A-Za-z]+)\\b")
+	var out := ""
+	var at := 0
+	for mt in verb.search_all(t):
+		var w := mt.get_string(1)
+		var low := w.to_lower()
+		var fixed := w
+		if low == "has":
+			fixed = "have"
+		elif low == "is":
+			fixed = "are"
+		elif low == "was":
+			fixed = "were"
+		elif low.ends_with("ches") or low.ends_with("shes") or low.ends_with("sses") or low.ends_with("xes"):
+			fixed = w.left(w.length() - 2)
+		elif low.ends_with("s") and not low.ends_with("ss") and low.length() > 3:
+			fixed = w.left(w.length() - 1)
+		if w == w.to_upper() and w.length() > 1:
+			fixed = fixed.to_upper()
+		out += t.substr(at, mt.get_start(1) - at) + fixed
+		at = mt.get_end(1)
+	t = out + t.substr(at)
+	if t.begins_with("You "):      # the rest of a sentence about you
+		for pair in [[" of their own", " of your own"], ["(draws a card)", "(draw a card)"], [" and keeps ", " and keep "], ["- returns ", "- return "], [" in and returns ", " in and return "]]:
+			t = t.replace(pair[0], pair[1])
+	# "offers You a card" -> "offers you a card" (not at the start of a sentence)
+	return RegEx.create_from_string("([a-z,] )You\\b").sub(t, "$1you", true)
+
 func _last_play() -> String:
 	if G.log_entries.is_empty():
 		return ""
 	var e: Dictionary = G.log_entries.back()
 	var col: String = {"attack": "#e0644e", "death": "#e0644e", "test": "#e9c977"}.get(e.tone, "#efe5c8")
-	return "[color=%s]%s[/color]" % [col, str(e.text).replace("[", "(")]
+	return "[color=%s]%s[/color]" % [col, _you(str(e.text)).replace("[", "(")]
 
 func _banner() -> Control:
 	var pc := PanelContainer.new()
@@ -2218,7 +2256,7 @@ func _render_side() -> void:
 	while log_shown < G.log_entries.size():
 		var e: Dictionary = G.log_entries[log_shown]
 		log_shown += 1
-		var txt: String = e.text.replace("[", "(")
+		var txt: String = _you(str(e.text)).replace("[", "(")
 		if e.tone in ["attack", "death", "test", "broken"]:
 			txt = "[b]%s[/b]" % txt
 		logbox.append_text("[color=%s]%s[/color]\n" % [tones.get(e.tone, "#2b241a"), txt])
@@ -3357,7 +3395,6 @@ func _touchtest() -> void:
 		if n.tooltip_text == G.players[1].name:
 			frame = n
 			break
-	var toasts_before := fx_root.get_child_count()
 	var fp := frame.get_global_rect().get_center()
 	_touch(fp, true)
 	await get_tree().create_timer(0.8).timeout
@@ -3367,7 +3404,7 @@ func _touchtest() -> void:
 	for n in fx_root.find_children("*", "Label", true, false):
 		if n.text == G.players[1].name:
 			shown = true
-	fails += say.call(shown and fx_root.get_child_count() > toasts_before, "holding a portrait shows its hint")
+	fails += say.call(shown, "holding a portrait shows its hint")      # (an older toast may be fading out meanwhile)
 	await _shot("/tmp/gshots2/touch-hint.png")
 	# a real mouse brings hovering back
 	var real := InputEventMouseMotion.new()
@@ -3386,6 +3423,55 @@ func _touchtest() -> void:
 	fails += say.call(turn_overlay == null, "landscape again removes it")
 	print("TOUCHTEST DONE fails=", fails)
 	get_tree().quit(fails)
+
+## --readme-shot: a real game, played for a while (you research, pass and keep your deals), then a
+## screenshot of the board on your turn, for the README: /tmp/gshots2/readme.png
+func _readme_shot() -> void:
+	await get_tree().process_frame
+	cfg.players = "5"
+	cfg.name = "You"
+	for i in range(4):
+		cfg["p%d" % (i + 1)] = ["hawk", "dove", "wild", "opp"][i]
+	for attempt in range(40):
+		_start_game()
+		pump_token += 1      # we drive the game ourselves, without the AI pacing
+		var guard := 0
+		while not G.over and guard < 3000:
+			guard += 1
+			var st := G.status()
+			if st == "prompt":
+				var pr := G.prompt
+				if str(pr.get("type", "")) == "trade":
+					G.answer_trade(ME.hand[0].id if not ME.hand.is_empty() else -1)
+				elif str(pr.get("type", "")) == "threat":
+					G.answer_threat(false)
+				else:
+					G.choose_counter(pr.options[0])
+			elif st == "human":
+				var tested := G.players.filter(func(q): return q.tested).size()
+				var trades := G.debts.size()
+				if G.phase == "play" and G.cur() == ME and G.turn_no >= 18 and tested >= 1 and ME.alive and G.deck.size() >= 3 and G.alive_list().size() == 4:
+					_render()
+					board_scroll.scroll_vertical = 0
+					await get_tree().create_timer(1.0).timeout
+					for fx in fx_root.get_children():      # no half-finished "NUCLEAR TEST" flash in the picture
+						fx.queue_free()
+					await get_tree().create_timer(0.3).timeout
+					await _shot("/tmp/gshots2/readme.png")
+					print("README SHOT turn ", G.turn_no, " attempt ", attempt)
+					get_tree().quit(0)
+					return
+				if G.phase == "honour":
+					G.honour(ME)
+				elif G.phase == "play":
+					if not G.play_research(ME):
+						G.play_skip(ME)
+				else:
+					G.war_declare(ME, {"kind": "pass"})
+			else:
+				G.step()
+	print("README SHOT: no suitable position found")
+	get_tree().quit(1)
 
 var scroll_to_me := func():
 	board_scroll.scroll_vertical = 0

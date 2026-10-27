@@ -1,5 +1,7 @@
 # Nuclear Poker (Godot 4)
 
+![A five-player game: Ambassador Lin has just struck President Reyes - his seat shows a skeleton and his cards lie burnt, the map marks his country, and The Atomic Herald reports the attack](docs/screenshot.png)
+
 Browser-playable digital adaptation of **Nuclear Poker** — a simple teaching game about nuclear strategy.
 You play the **Classic** rules sheet against two to four AI powers (3-5 players), trading cards (your partner sees what you offer; their card comes back face down, on their next turn - if they keep the deal).
 The Slow / Fog / Fast WAR modes and the Biowar (2000 / 2035) expansions were removed for now so the game can be built one
