@@ -388,8 +388,8 @@ func perform_attacks(list: Array) -> void:
 const SPENT := {"short": "short", "long": "long"}
 
 func _spend_weapon(p: Player, type: String) -> void:
-	if not SPENT.has(type):
-		return
+	if not SPENT.has(type) or is_superpower(p):
+		return      # a Superpower spends nothing, whichever weapon it fires
 	var key: String = SPENT[type]
 	for arr in [p.table, p.hand]:
 		for i in range(arr.size()):

@@ -1,7 +1,7 @@
 # Nuclear Poker (Godot 4)
 
 Browser-playable digital adaptation of **Nuclear Poker** — a simple teaching game about nuclear strategy.
-You play the **Classic** rules sheet against two to four AI powers (3-5 players), with face-up trading and deals that can be broken.
+You play the **Classic** rules sheet against two to four AI powers (3-5 players), trading cards (your partner sees what you offer; their card comes back face down, on their next turn - if they keep the deal).
 The Slow / Fog / Fast WAR modes and the Biowar (2000 / 2035) expansions were removed for now so the game can be built one
 mode at a time; they are in git history at the tag `all-modes`. (The Labs / Plague card art is still in `assets/`.)
 
