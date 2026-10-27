@@ -79,6 +79,8 @@ var sounds := {}
 var ambience: AudioStreamPlayer = null
 var drag_ghost: Control = null      # the picture that follows the pointer while dragging
 var zoom: TextureRect = null      # enlarged copy of the card under the pointer
+var betrayals := {}               # player id -> how many deals they have broken with you
+var hold_until := 0               # the AIs wait until then (msec) - e.g. while a betrayal is on screen
 # touch screens (tablets, phones): taps are clicks, and touching stands in for hovering
 var touch := false
 var touch_at := Vector2.ZERO
@@ -1345,6 +1347,7 @@ func _start_game() -> void:
 	G.setup({"players": plist})
 	ME = G.players[0]
 	end_shown = false
+	betrayals.clear()
 	ff = false
 	fresh.clear()
 	paused = 0
@@ -1388,6 +1391,11 @@ func _on_event(t: String, d: Dictionary) -> void:
 			snd("deal")
 		"renege":
 			snd("broken")
+			if d.to == ME:
+				betrayals[d.p.id] = int(betrayals.get(d.p.id, 0)) + 1
+				_betrayed(d.p)
+			else:
+				_toast_red("%s broke a deal with %s!" % [d.p.name, d.to.name])
 		"turn":
 			if d.p == ME:
 				snd("your_turn")
@@ -1407,7 +1415,7 @@ func _pump() -> void:
 		_finish()
 		return
 	if st == "prompt":
-		if str(G.prompt.get("type", "")) == "trade" or str(G.prompt.get("type", "")) == "deal":
+		if str(G.prompt.get("type", "")) == "trade":
 			pass      # answered in place: in the trade areas on the board
 		elif str(G.prompt.get("type", "")) == "threat":
 			_threat_modal()
@@ -1418,6 +1426,7 @@ func _pump() -> void:
 		_on_human_turn(tok)
 		return
 	var delay: float = ((AI_DELAY + _reading_time()) if ME.alive else (0.04 if ff else 0.26)) / speed
+	delay = maxf(delay, (hold_until - Time.get_ticks_msec()) / 1000.0)      # let a big moment sink in
 	await get_tree().create_timer(delay).timeout
 	if tok != pump_token or G == null:
 		return
@@ -1580,14 +1589,6 @@ func _trade_items_for(p: NPGame.Player) -> Array:
 				to = pr.player
 				label = "OFFER FROM " + nm.call(q)
 				tip = "Offered by %s. Answer with a card of your own, or decline." % q.name
-			elif ptype == "deal" and int(c.id) == int(pr.x_id):
-				to = pr.partner
-				label = "OFFER FROM " + nm.call(q)
-				tip = "Offered by %s." % q.name
-			elif ptype == "deal" and int(c.id) == int(pr.y_id):
-				to = pr.player
-				label = "ANSWER FROM " + nm.call(q)
-				tip = "%s's answer - it would arrive on their next turn, and they may break the deal." % q.name
 			else:
 				for d in G.debts:
 					if int(d.pledge) == int(c.id):
@@ -1675,20 +1676,6 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 			_answer_trade(-1))
 		vb.add_child(hook)
 		btn["trade_counter"] = hook
-	elif mine and str(pr.get("type", "")) == "deal":
-		var y := _btn("Accept", "primary", 13)
-		y.tooltip_text = "Your card goes to %s now; theirs reaches you on their next turn - and they may break the deal." % pr.partner.name
-		y.pressed.connect(func():
-			G.answer_deal(true)
-			_after_human())
-		var n := _btn("Decline", "default", 13)
-		n.pressed.connect(func():
-			G.answer_deal(false)
-			_after_human())
-		hdr.add_child(y)
-		hdr.add_child(n)
-		btn["deal_yes"] = y
-		btn["deal_no"] = n
 	_pass_through(pc)
 	return pc
 
@@ -1711,6 +1698,9 @@ func _seat(p: NPGame.Player) -> Control:
 	hd.add_theme_constant_override("v_separation", 3)
 	var five := G.players.size() >= 5
 	hd.add_child(_lbl(p.name.to_upper(), 15 if five else 20, C_INK, HEAD))
+	if betrayals.has(p.id):      # a standing reminder: this power cheated you
+		var nb := int(betrayals[p.id])
+		hd.add_child(_badge("BROKE %s WITH YOU" % ("A DEAL" if nb == 1 else "%d DEALS" % nb), Color("#ffd9d2"), Color("#5a1a12"), Color("#c0392b")))
 	if p.alive:
 		for d in G.debts:
 			if d.to == p.id:
@@ -1786,9 +1776,6 @@ func _banner() -> Control:
 		var pt := str(G.prompt.get("type", ""))
 		if pt == "trade" and G.prompt.player == ME:
 			text = "[b][color=#f2b134]%s offers you a trade.[/color][/b] Drag one of your cards into your trade area to answer - or decline." % G.prompt.from.name
-			tone = "you"
-		elif pt == "deal" and G.prompt.player == ME:
-			text = "[b][color=#f2b134]%s has answered.[/color][/b] Accept the deal or decline it, in your trade area." % G.prompt.partner.name
 			tone = "you"
 		elif G.phase == "honour":
 			if G.cur() == ME and not G._debts_of(ME).is_empty():
@@ -2040,7 +2027,7 @@ func _action_bar() -> Control:
 
 func _classic_actions(bar: HFlowContainer) -> void:
 	var L := G.legal(ME)
-	if str(G.prompt.get("type", "")) == "trade" or str(G.prompt.get("type", "")) == "deal":
+	if str(G.prompt.get("type", "")) == "trade":
 		return      # answered in your trade area; the banner says so
 	if G.phase == "honour" and G.cur() == ME and not G._debts_of(ME).is_empty():
 		var dd: Dictionary = G._debts_of(ME)[0]
@@ -2105,13 +2092,13 @@ func _render_side() -> void:
 	if log_edition != null:
 		log_edition.text = "ROUND %d" % G.round_no
 	# ink colours for paper: red for attacks and deaths, dark brass for tests, faded for quiet lines
-	var tones := {"attack": "#9a2414", "death": "#7a1408", "test": "#6b4c00", "reveal": "#5a3d1e", "quiet": "#7d7357", "sys": "#3f4a12"}
+	var tones := {"attack": "#9a2414", "death": "#7a1408", "test": "#6b4c00", "broken": "#9a2414", "reveal": "#5a3d1e", "quiet": "#7d7357", "sys": "#3f4a12"}
 	var added := false
 	while log_shown < G.log_entries.size():
 		var e: Dictionary = G.log_entries[log_shown]
 		log_shown += 1
 		var txt: String = e.text.replace("[", "(")
-		if e.tone in ["attack", "death", "test"]:
+		if e.tone in ["attack", "death", "test", "broken"]:
 			txt = "[b]%s[/b]" % txt
 		logbox.append_text("[color=%s]%s[/color]\n" % [tones.get(e.tone, "#2b241a"), txt])
 		added = true
@@ -2543,7 +2530,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Your turn: draw or trade")
 	_rules_p(vb, "- [b]Research[/b]: draw a card from the draw pile.\n- [b]Trade[/b]: drag a card from your hand onto another player's [b]trade area[/b] to offer it.\n- If the draw pile is empty you can only trade, or skip your turn.")
 	_rules_h(vb, "Trading - face down, and you can be cheated")
-	_rules_p(vb, "- Trades are [b]face down[/b]. You never see the card you are offered, or the card promised to you, until it arrives in your hand - and nobody else ever sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. You then [b]accept[/b] the deal or decline it.\n- If you accept, your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- A refusal never costs your turn: offer again, to the same player or another, or draw instead.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
+	_rules_p(vb, "- Trades are [b]face down[/b]. You never see the card you are offered, or the card promised to you, until it arrives in your hand - and nobody else ever sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- A refusal never costs your turn: offer again, to the same player or another, or draw instead.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
 	_rules_h(vb, "Nuclear exchanges")
 	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b] (the sheet's house rule). After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack, threaten - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
 	_rules_h(vb, "Attacking")
@@ -2645,6 +2632,69 @@ func _fx(text: String, kind: String) -> void:
 	tw.tween_property(l, "scale", Vector2(1.1, 1.1), 0.5).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.tween_property(l, "modulate:a", 0.0, 0.5).set_delay(1.0)
 	tw.chain().tween_callback(root.queue_free)
+
+## Someone broke a deal with you: a rubber stamp slammed across the screen, their face, and what it cost.
+func _betrayed(p: NPGame.Player) -> void:
+	var red := Color("#d23a2a")
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var flash := ColorRect.new()
+	flash.color = Color(0.45, 0.02, 0.0, 0.0)
+	flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(flash)
+	var cc := CenterContainer.new()
+	cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(cc)
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _sb(Color(0.08, 0.06, 0.04, 0.93), red, 3, 10, 22))
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cc.add_child(card)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 22)
+	card.add_child(hb)
+	hb.add_child(_portrait(p, 110.0))
+	var vb := VBoxContainer.new()
+	vb.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_theme_constant_override("separation", 6)
+	hb.add_child(vb)
+	var stamp := PanelContainer.new()
+	stamp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), red, 5, 4, 8))
+	var sl := _lbl("DEAL BROKEN", 58, red, HEAD)
+	stamp.add_child(sl)
+	stamp.rotation = -0.07
+	vb.add_child(stamp)
+	vb.add_child(_lbl("%s kept the card promised to you." % p.name, 20, C_INK))
+	vb.add_child(_lbl("Your card is gone. Remember who you can trust.", 15, C_MUT, MONO))
+	fx_root.add_child(root)
+	hold_until = Time.get_ticks_msec() + 3000
+	await get_tree().process_frame
+	card.pivot_offset = card.size / 2.0
+	card.scale = Vector2(1.5, 1.5)
+	card.modulate.a = 0.0
+	var tw := root.create_tween().set_parallel(true)
+	tw.tween_property(flash, "color:a", 0.35, 0.12)
+	tw.tween_property(flash, "color:a", 0.0, 1.4).set_delay(0.12)
+	tw.tween_property(card, "modulate:a", 1.0, 0.1)
+	tw.tween_property(card, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(card, "modulate:a", 0.0, 0.5).set_delay(3.2)
+	tw.chain().tween_callback(root.queue_free)
+	_shake()
+
+func _toast_red(msg: String) -> void:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _sb(Color("#3a120c"), Color("#d23a2a"), 2, 99, 10))
+	pc.add_child(_lbl(msg, 15, Color("#ffd9d2")))
+	fx_root.add_child(pc)
+	await get_tree().process_frame
+	var vp := get_viewport_rect().size
+	pc.position = Vector2((vp.x - pc.size.x) / 2.0, vp.y - 110.0)
+	var tw := pc.create_tween()
+	tw.tween_interval(3.0)
+	tw.tween_property(pc, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(pc.queue_free)
 
 func _shake() -> void:
 	if game_root == null or not game_root.visible:
@@ -2820,7 +2870,7 @@ func _autotest() -> void:
 	for run in runs:
 		cfg.players = run
 		_start_game()
-		var acts := {"research": 0, "offer": 0, "trade_counter": 0, "trade_no": 0, "deal_yes": 0, "deal_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0, "threat": 0, "threat_yes": 0, "threat_no": 0, "disarm": 0}
+		var acts := {"research": 0, "offer": 0, "trade_counter": 0, "trade_no": 0, "honour": 0, "renege": 0, "test": 0, "attack": 0, "stand": 0, "counter": 0, "skip": 0, "declined": 0, "threat": 0, "threat_yes": 0, "threat_no": 0, "disarm": 0}
 		var iter := 0
 		var shot_taken := false
 		while iter < 6000:
@@ -2850,14 +2900,6 @@ func _autotest() -> void:
 							break
 					handled = true
 					break
-				if mb.kind == "deal_yes" or mb.kind == "deal_no":
-					var want2 := "deal_yes" if randf() < 0.6 else "deal_no"
-					for mb5 in modal_btns:
-						if mb5.kind == want2:
-							mb5.button.pressed.emit()
-							acts[want2] += 1
-							break
-					handled = true
 					break
 				if mb.kind == "threat_yes" or mb.kind == "threat_no":
 					var tw := "threat_yes" if randf() < 0.5 else "threat_no"
@@ -2894,15 +2936,11 @@ func _autotest() -> void:
 			if not ME.alive or G.over:
 				continue
 			var ptype := str(G.prompt.get("type", ""))
-			if (ptype == "trade" or ptype == "deal") and G.prompt.player == ME:
-				if ptype == "trade" and btn.has("trade_no"):
+			if ptype == "trade" and G.prompt.player == ME:
+				if btn.has("trade_no"):
 					var tk := "trade_counter" if randf() < 0.55 else "trade_no"
 					btn[tk].pressed.emit()
 					acts[tk] += 1
-				elif ptype == "deal" and btn.has("deal_yes"):
-					var dk := "deal_yes" if randf() < 0.6 else "deal_no"
-					btn[dk].pressed.emit()
-					acts[dk] += 1
 				continue
 			if G.turn_no > 120 and iter % 150 == 0:
 				_act_ceasefire()      # a long standoff: ask the table to stand down
@@ -3120,7 +3158,7 @@ func _dragtest() -> void:
 	var src := _first_hand_card()
 	var sr := src.get_global_rect()
 	await _drag(Vector2(sr.position.x + sr.size.x / 2.0, minf(sr.position.y + 30.0, 705.0)), me_zone.get_global_rect().get_center())
-	print("DRAGTEST answer: prompt=", G.prompt.get("type", "-"), " deal=", G.prompt.get("type", "-") == "deal")
+	print("DRAGTEST answer: prompt=", G.prompt.get("type", "-"), " deal done=", G.debts.size() > 0)
 	if G.prompt.get("type", "-") == "trade":
 		fails += 1
 		print("DRAGTEST FAIL: modal drop did nothing")
@@ -3396,27 +3434,12 @@ func _shots() -> void:
 	scroll_to_me.call()
 	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/6-trade-offer.png")
-	# I offered a card and an AI answered: accept the pair?
 	G.players[1].hand.append(G.players[1].trade.pop_back())
 	G.prompt = {}
 	G.turn = 0
 	G.phase = "play"
-	var mx = ME.hand.pop_back()
-	mx.pub = true
-	ME.trade.append(mx)
-	var py = G.players[2].hand.pop_back()
-	py.pub = true
-	G.players[2].trade.append(py)
-	G.prompt = {"type": "deal", "player": ME, "partner": G.players[2], "x_id": mx.id, "y_id": py.id, "x_key": mx.key, "y_key": py.key}
-	_render()
-	await get_tree().create_timer(0.5).timeout
-	scroll_to_me.call()
-	await get_tree().create_timer(0.3).timeout
-	await _shot(d + "/6b-deal.png")
 	# a pledge waiting to be delivered
 	G.prompt = {}
-	G.players[2].hand.append(G.players[2].trade.pop_back())
-	ME.hand.append(ME.trade.pop_back())
 	var pledge = ME.hand.pop_back()
 	pledge.pub = true
 	ME.trade.append(pledge)
@@ -3430,6 +3453,12 @@ func _shots() -> void:
 	_render()
 	await get_tree().create_timer(0.5).timeout
 	await _shot(d + "/7-honour.png")
+	betrayals[1] = 1
+	_render()
+	_betrayed(G.players[1])
+	await get_tree().create_timer(0.6).timeout
+	await _shot(d + "/7d-betrayed.png")
+	betrayals.clear()
 	# a threat against me, my own threat menu, and the disarm confirmation
 	G.debts = []
 	G.turn = 1

@@ -65,23 +65,20 @@ func _init() -> void:
 	var n0 := g.log_entries.size()
 	var declined := 0
 	var res := ""
+	var x = card(me, "short")
+	var trust_before := g.trust_of(vol, me)
 	for i in range(200):
 		res = g.trade_offer(me, card(me, "short").id, 1)
 		if res != "declined":
 			break
 		declined += 1
 		check(me.hand.size() == 3 and me.trade.is_empty() and g.phase == "play" and g.cur() == me, "a refusal returns the card and keeps your turn") if declined == 1 else null
-	check(res == "prompt" and g.prompt.type == "deal", "Volkov answers sooner or later; you are asked to accept (got %s after %d refusals)" % [res, declined])
+	check(res == "accepted" and g.prompt.is_empty(), "when Volkov answers, the deal is done - your offer was your acceptance (after %d refusals)" % declined)
 	check(not logs_since(g, n0).to_lower().contains("short range") and not logs_since(g, n0).to_lower().contains("uranium"), "the log never names a traded card")
-	check(not g.prompt.has("card_key") and not g.prompt.has("y_key") and not g.prompt.has("x_key"), "the deal prompt carries no card faces")
-	var x = me.trade[0]
 	var y = vol.trade[vol.trade.size() - 1]
-	check(not x.pub and not y.pub, "both cards lie face down in the trade areas")
-	check(me.hand.size() == 2 and vol.hand.size() == 2, "each side has one card out of hand")
-	# accept: yours goes over at once, theirs is only a pledge
-	var trust_before := g.trust_of(vol, me)
-	g.answer_deal(true)
-	check(vol.hand.has(x) and not me.trade.has(x), "accepting hands your card over at once")
+	check(not x.pub and not y.pub, "both cards stay face down")
+	check(me.hand.size() == 2 and vol.hand.size() == 3, "your card has gone to Volkov; his answer waits in his trade area")
+	check(vol.hand.has(x) and not me.trade.has(x), "your card is handed over at once")
 	check(vol.trade.has(y) and not me.hand.has(y), "their card stays behind as a pledge")
 	check(g.debts.size() == 1 and g.debts[0].from == 0 and g.debts[0].to == 1 and g.debts[0].pledge == y.id, "the debt is recorded (Volkov owes you)")
 	check(g.phase == "war", "a completed trade is your turn's action")
@@ -107,7 +104,6 @@ func _init() -> void:
 	vol = g.players[1]
 	res = offer_until_answered(g, me, "short", 1)
 	y = vol.trade[vol.trade.size() - 1]
-	g.answer_deal(true)
 	g.end_turn()
 	var tv := g.trust_of(me, vol)
 	var tw := g.trust_of(g.players[3], vol)
@@ -127,12 +123,10 @@ func _init() -> void:
 	g.answer_trade(-1)
 	check(vol.hand.size() == 3 and vol.trade.is_empty() and g.prompt.is_empty() and g.cur() == vol and g.phase == "play", "declining sends the card home; Volkov's turn goes on")
 	var r3b := ""
-	for i in range(50):
-		r3b = g.trade_offer(vol, card(vol, "warhead").id, 0)
-		g.answer_trade(card(me, "uranium").id)
-		if g.debts.size() > 0:
-			break
-	check(g.debts.size() == 1 and g.debts[0].to == 0, "when Volkov accepts your answer, you owe him the card")
+	g.phase = "play"
+	r3b = g.trade_offer(vol, card(vol, "warhead").id, 0)
+	g.answer_trade(card(me, "uranium").id)
+	check(g.debts.size() == 1 and g.debts[0].to == 0, "answering Volkov's offer closes the deal: you owe him the card")
 	check(me.trade.size() == 1 and me.trade[0].key == "uranium" and vol.hand.any(func(c): return c.key == "warhead") == false, "your answer waits in your trade area; his card is already in your hand") if g.debts.size() > 0 else null
 	check(card(me, "warhead") != null, "you received the Warhead")
 
@@ -142,7 +136,6 @@ func _init() -> void:
 	vol = g.players[1]
 	offer_until_answered(g, me, "short", 1)
 	y = vol.trade[vol.trade.size() - 1]
-	g.answer_deal(true)
 	g.kill([me], {})      # the creditor dies before delivery
 	g.end_turn()
 	check(g.debts.is_empty() and vol.hand.has(y) and g.phase == "play", "creditor gone: the pledge goes back to the pledger, no honour phase")
@@ -151,7 +144,6 @@ func _init() -> void:
 	vol = g.players[1]
 	offer_until_answered(g, me, "short", 1)
 	y = vol.trade[vol.trade.size() - 1]
-	g.answer_deal(true)
 	g.kill([vol], {})      # the pledger dies
 	g.end_turn()
 	check(g.debts.is_empty() and vol.hand.has(y) and y.pub and not me.hand.has(y), "pledger gone: the pledge is revealed with their hand; the creditor gets nothing")

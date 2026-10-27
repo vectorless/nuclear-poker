@@ -58,7 +58,7 @@ var trade_tried: bool = false     # AI has already made its one trade offer this
 var last_threat: Dictionary = {}  # player id -> turn_no of their last threat (AI cooldown)
 var over: bool = false
 var result: Dictionary = {}
-var prompt: Dictionary = {}       # pending human decision: counter | trade | deal | threat
+var prompt: Dictionary = {}       # pending human decision: counter | trade | threat
 var counter_q: Array = []
 var next_card_id: int = 1
 var total: Dictionary = {}
@@ -552,7 +552,7 @@ func _void_debts() -> void:
 	debts = keep
 
 ## Start a deal: `p` puts a card face down in their trade area, addressed to `target_id`.
-## Returns "declined" | "prompt" (a human must answer) | "accepted" | "invalid".
+## Returns "declined" | "prompt" (a human must answer) | "accepted" (answered: the deal is done) | "invalid".
 func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	if phase != "play" or not p.alive or cur() != p or not prompt.is_empty():
 		return "invalid"
@@ -586,18 +586,13 @@ func _place_counter(t: Player, yid: int, p: Player, x: Dictionary) -> void:
 	log_msg("%s answers with a card of their own." % t.name)
 	event.emit("trade_counter", {"from": t, "to": p, "c": y})
 
-## The offerer weighs the pair (AI) or is asked (human).
+## The target answered: the deal is done. Offering was the offerer's acceptance - their card goes
+## over now, and the answer stays behind as a pledge for the target's next turn.
 func _decide_pair(p: Player, t: Player, x: Dictionary) -> String:
 	var y = t.trade[t.trade.size() - 1]
-	if p.human:
-		prompt = {"type": "deal", "player": p, "partner": t, "x_id": x.id, "y_id": y.id}
-		return "prompt"
-	if ai_accept_pair(p, t, x, y):
-		_finish_deal(p, t, x, y)
-		_after_play()
-		return "accepted"
-	_cancel_offer(p, t, "%s turns down %s's counter-offer." % [p.name, t.name])
-	return "declined"
+	_finish_deal(p, t, x, y)
+	_after_play()
+	return "accepted"
 
 func _cancel_offer(p: Player, t: Player, msg: String) -> void:
 	for c in p.trade.duplicate():
@@ -642,23 +637,6 @@ func answer_trade(counter_id: int) -> bool:
 	_decide_pair(p, t, x)
 	return true
 
-## Human answer to a counter-offer.
-func answer_deal(accept: bool) -> bool:
-	if prompt.is_empty() or prompt.get("type", "") != "deal":
-		return false
-	var pr := prompt
-	prompt = {}
-	var p: Player = pr.player
-	var t: Player = pr.partner
-	var x = _trade_card(p, int(pr.x_id))
-	var y = _trade_card(t, int(pr.y_id))
-	if accept and x != null and y != null:
-		_finish_deal(p, t, x, y)
-		_after_play()
-	else:
-		_cancel_offer(p, t, "%s turns down %s's counter-offer." % [p.name, t.name])
-	return true
-
 func _take_hand_card_peek(p: Player, card_id: int) -> bool:
 	for c in p.hand:
 		if c.id == card_id:
@@ -697,7 +675,7 @@ func renege(p: Player) -> bool:
 	var d: Dictionary = ds[0]
 	debts.erase(d)
 	_recall(p, int(d.pledge))
-	log_msg("%s BREAKS the deal with %s - %s is kept. Deceived!" % [p.name, by_id(d.from).name, "the pledged card"], "reveal")
+	log_msg("%s BREAKS the deal with %s and keeps the card promised in return. Deceived!" % [p.name, by_id(d.from).name], "broken")
 	_deal_outcome(p, by_id(d.from), false)
 	event.emit("renege", {"p": p, "to": by_id(d.from)})
 	_next_honour()
@@ -741,8 +719,9 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 	var y = least_useful(t)
 	return y.id if y != null else -1
 
-## AI judging a deal: its own card against a face-down promise (expected value x trust).
-func ai_accept_pair(p: Player, t: Player, x: Dictionary, y: Dictionary) -> bool:
+## An offer is binding (if they answer, the deal is done), so AI p weighs it before making it:
+## its own card against a face-down promise from t (expected value x trust in t).
+func ai_would_deal(p: Player, t: Player, x: Dictionary) -> bool:
 	var pr := 0.5 + 0.9 * (_expected_gain(p) * _pledge_faith(p, t) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
 	return rng.randf() < clampf(pr, 0.05, 0.95)
 
@@ -787,6 +766,8 @@ func ai_play_classic(p: Player) -> bool:
 			var c = least_useful(p)
 			if c == null:
 				break
+			if not ai_would_deal(p, t, c):
+				continue      # an offer commits: only make it to someone whose promise is worth the card
 			var res := trade_offer(p, c.id, t.id)
 			if res == "accepted" or res == "prompt":
 				return true
@@ -840,7 +821,7 @@ func can_disarm(p: Player) -> bool:
 func disarm_caps(p: Player) -> bool:
 	if not can_disarm(p):
 		return false
-	if not prompt.is_empty() and not str(prompt.get("type", "")) in ["trade", "deal"]:
+	if not prompt.is_empty() and str(prompt.get("type", "")) != "trade":
 		return false
 	var names := _return_caps(p)
 	log_msg("%s DISARMS - returns %s to the deck." % [p.name, ", ".join(names)], "reveal")

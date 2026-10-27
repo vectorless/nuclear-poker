@@ -27,8 +27,6 @@ func _init() -> void:
 						if str(pr.get("type", "")) == "trade":
 							var hand: Array = pr.player.hand
 							g.answer_trade(hand[g.rng.randi() % hand.size()].id if g.rng.randf() < 0.5 and not hand.is_empty() else -1)
-						elif str(pr.get("type", "")) == "deal":
-							g.answer_deal(g.rng.randf() < 0.6)
 						elif str(pr.get("type", "")) == "threat":
 							g.answer_threat(g.rng.randf() < 0.5)
 						else:
