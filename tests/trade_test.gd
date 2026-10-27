@@ -119,7 +119,7 @@ func _init() -> void:
 	vol = g.players[1]
 	g.turn = 1
 	var r3 := g.trade_offer(vol, card(vol, "warhead").id, 0)
-	check(r3 == "prompt" and g.prompt.type == "trade" and g.prompt.player == me and not g.prompt.has("card_key"), "an offer to you asks you to answer, face down")
+	check(r3 == "prompt" and g.prompt.type == "trade" and g.prompt.player == me and g.prompt.get("card_key", "") == "warhead", "an offer to you shows you the card and asks you to answer")
 	g.answer_trade(-1)
 	check(vol.hand.size() == 3 and vol.trade.is_empty() and g.prompt.is_empty() and g.cur() == vol and g.phase == "play", "declining sends the card home; Volkov's turn goes on")
 	var r3b := ""
@@ -202,6 +202,20 @@ func _init() -> void:
 					kept_dup += 1
 	print("      honour rate: spare card %d%%, card it needs %d%%" % [kept_dup / 4, kept_vital / 4])
 	check(kept_dup > kept_vital, "a power keeps its word more readily over a card it can spare")
+
+	# ---- 8. the player offered a card sees it: a needed card tempts, a duplicate does not
+	var yes_need := 0
+	var yes_dup := 0
+	for s in range(300):
+		var g3 := game([["warhead", "uranium"], ["uranium", "short", "long"], ["testing"], ["counter"]], 500 + s)
+		var a3 = g3.players[0]
+		var b3 = g3.players[1]
+		if g3.ai_counter_offer(b3, a3, card(a3, "warhead")) >= 0:
+			yes_need += 1
+		if g3.ai_counter_offer(b3, a3, card(a3, "uranium")) >= 0:
+			yes_dup += 1
+	print("      Volkov answers: an offer of a card he needs %d%%, a duplicate %d%%" % [yes_need / 3, yes_dup / 3])
+	check(yes_need > yes_dup + 30, "an AI looks at the card offered and wants the one it needs")
 
 	print("TRADE TEST ", "ALL OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)

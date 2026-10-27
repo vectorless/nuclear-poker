@@ -564,13 +564,13 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	var x = _take_hand_card(p, card_id)
 	if x == null:
 		return "invalid"
-	x.pub = false      # face down: only p knows what it is
+	x.pub = false      # shown to the player it is offered to, hidden from the rest of the table
 	p.trade.append(x)
 	trade_tried = true
 	log_msg("%s offers %s a card." % [p.name, t.name])
 	event.emit("trade_offer", {"from": p, "to": t, "c": x})
 	if t.human:
-		prompt = {"type": "trade", "player": t, "from": p, "card_id": x.id}      # no card key: it is face down
+		prompt = {"type": "trade", "player": t, "from": p, "card_id": x.id, "card_key": x.key}      # t may look at it
 		return "prompt"
 	var yid := ai_counter_offer(t, p, x)
 	if yid < 0:
@@ -707,13 +707,14 @@ func _gain(p: Player, c: Dictionary) -> float:
 		return 0.25 if dup else {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key]
 	return 0.25 if dup else 0.85
 
-## AI answering an offer: the id of the card it offers back, or -1 to decline.
+## AI answering an offer: the id of the card it offers back, or -1 to decline. It has looked at the
+## card on offer: one it needs is tempting, a duplicate or a card it has no use for is not.
 func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 	if t.hand.is_empty():
 		return -1
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	var pr := float(t.persona.trade) + 0.25 * thr + 0.5 * (_expected_gain(t) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
+	var pr := float(t.persona.trade) + 0.25 * thr + 0.9 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
 	if rng.randf() >= clampf(pr, 0.03, 0.95):
 		return -1
 	var y = least_useful(t)

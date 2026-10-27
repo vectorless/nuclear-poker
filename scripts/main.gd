@@ -1585,10 +1585,12 @@ func _trade_items_for(p: NPGame.Player) -> Array:
 			var to: NPGame.Player = q
 			var label := ""
 			var tip := "In a trade."
+			var seen := false
 			if ptype == "trade" and int(c.id) == int(pr.card_id):
 				to = pr.player
 				label = "OFFER FROM " + nm.call(q)
 				tip = "Offered by %s. Answer with a card of your own, or decline." % q.name
+				seen = to == ME      # you may look at a card offered to you
 			else:
 				for d in G.debts:
 					if int(d.pledge) == int(c.id):
@@ -1597,7 +1599,7 @@ func _trade_items_for(p: NPGame.Player) -> Array:
 						tip = "Owed by %s - delivered on their next turn, or the deal is broken." % q.name
 			if to == p:
 				# face down: you see only your own cards; everyone else's are backs until they arrive
-				res.append({"c": c, "label": label, "tip": tip, "mine": q == ME})
+				res.append({"c": c, "label": label, "tip": tip, "mine": q == ME, "seen": seen})
 	return res
 
 func _trade_zone(p: NPGame.Player, w: float) -> Control:
@@ -1648,6 +1650,10 @@ func _trade_zone(p: NPGame.Player, w: float) -> Control:
 			tx.tooltip_text = "Your %s - only you can see it. %s" % [NPGame.INFO[it.c.key].name, it.tip]
 			tx.modulate = Color(1, 1, 1, 0.8)
 			cp.add_child(tx)
+		elif it.get("seen", false):
+			var tx2 := _tex(it.c.key, w)
+			tx2.tooltip_text = "%s - shown to you only. %s" % [NPGame.INFO[it.c.key].name, it.tip]
+			cp.add_child(tx2)
 		else:
 			var bk := CardBack.new()
 			bk.custom_minimum_size = Vector2(w, w * 430.0 / 330.0)
@@ -1775,7 +1781,7 @@ func _banner() -> Control:
 		var wa := _war_peek()
 		var pt := str(G.prompt.get("type", ""))
 		if pt == "trade" and G.prompt.player == ME:
-			text = "[b][color=#f2b134]%s offers you a trade.[/color][/b] Drag one of your cards into your trade area to answer - or decline." % G.prompt.from.name
+			text = "[b][color=#f2b134]%s offers you %s.[/color][/b] Drag one of your cards into your trade area to answer - or decline." % [G.prompt.from.name, NPGame.INFO[str(G.prompt.card_key)].name if G.prompt.has("card_key") else "a card"]
 			tone = "you"
 		elif G.phase == "honour":
 			if G.cur() == ME and not G._debts_of(ME).is_empty():
@@ -2529,8 +2535,8 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40, 5 players = 48[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
 	_rules_h(vb, "Your turn: draw or trade")
 	_rules_p(vb, "- [b]Research[/b]: draw a card from the draw pile.\n- [b]Trade[/b]: drag a card from your hand onto another player's [b]trade area[/b] to offer it.\n- If the draw pile is empty you can only trade, or skip your turn.")
-	_rules_h(vb, "Trading - face down, and you can be cheated")
-	_rules_p(vb, "- Trades are [b]face down[/b]. You never see the card you are offered, or the card promised to you, until it arrives in your hand - and nobody else ever sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- A refusal never costs your turn: offer again, to the same player or another, or draw instead.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
+	_rules_h(vb, "Trading - and you can be cheated")
+	_rules_p(vb, "- The player you offer a card to [b]sees it[/b] before deciding; nobody else does. The card they answer with stays [b]face down[/b] until it arrives in your hand - and the rest of the table never sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- A refusal never costs your turn: offer again, to the same player or another, or draw instead.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
 	_rules_h(vb, "Nuclear exchanges")
 	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b] (the sheet's house rule). After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack, threaten - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
 	_rules_h(vb, "Attacking")
