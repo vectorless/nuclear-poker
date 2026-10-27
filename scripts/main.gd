@@ -81,7 +81,6 @@ var ambience: AudioStreamPlayer = null
 var drag_ghost: Control = null      # the picture that follows the pointer while dragging
 var zoom: TextureRect = null      # enlarged copy of the card under the pointer
 var betrayals := {}               # player id -> how many deals they have broken with you
-var hold_until := 0               # the AIs wait until then (msec) - e.g. while a betrayal is on screen
 # touch screens (tablets, phones): taps are clicks, and touching stands in for hovering
 var touch := false
 var touch_at := Vector2.ZERO
@@ -303,9 +302,9 @@ class HandView extends Control:
 				t.tween_property(c, "modulate:a", 1.0, 0.25)
 
 class TableMap extends Control:
-	# A small campaign map: one country per player, in turn order clockwise round an inland sea.
-	# Countries that share a border are neighbours (solid amber - Short range reaches them);
-	# countries across the sea are linked by a dashed line (Long range only).
+	# A small campaign map: one country per player, in turn order clockwise round the highlands at
+	# the heart of a continent. Countries that share a border are neighbours (solid amber - Short
+	# range reaches them); countries across the highlands are linked by a dashed line (Long range only).
 	var seats: Array = []     # {name, alive, tested, turn, you, color}
 	var links: Array = []     # [i, j, "short" | "long"]
 	var font: Font
@@ -322,32 +321,61 @@ class TableMap extends Control:
 	const COAST := Color("#cdbd8c")
 	const INK := Color("#1c1a12")
 
-	func _wob(a: float, k: float, ph: float) -> float:
-		return 1.0 + k * (0.5 * sin(3.0 * a + 1.3 + ph) + 0.3 * sin(5.0 * a + 0.4 + 2.0 * ph)
-			+ 0.22 * sin(9.0 * a + 2.1 + ph) + 0.12 * sin(16.0 * a + 0.7))
+	# ---- geometry: a continent with a rugged coast (peninsulas, bays, islands), unclaimed highlands
+	# and a lake at its heart, and one country per player in a ring round the highlands. Countries
+	# next to each other in turn order share a border; the others only meet across the highlands.
+	var _norm := 0.0
+	func _rx() -> float:
+		return size.x * 0.5 - 9.0
+	func _ry() -> float:
+		return size.y * 0.5 - 6.0
+	func _bump(a: float, at: float, w: float) -> float:
+		var d := wrapf(a - at, -PI, PI)
+		return exp(-(d / w) * (d / w))
+	func _coast_f(a: float) -> float:
+		return (1.0 + 0.08 * sin(2.0 * a + 0.6) + 0.07 * sin(3.0 * a + 2.2) + 0.05 * sin(5.0 * a + 0.4)
+			+ 0.035 * sin(8.0 * a + 1.7) + 0.02 * sin(13.0 * a + 0.3) + 0.012 * sin(23.0 * a + 2.9)
+			+ 0.17 * _bump(a, 0.35, 0.09) + 0.12 * _bump(a, 3.75, 0.08) + 0.08 * _bump(a, 5.0, 0.07)
+			- 0.17 * _bump(a, 2.35, 0.07) - 0.12 * _bump(a, 5.45, 0.06) - 0.09 * _bump(a, 1.25, 0.05))
 	func _outer(a: float) -> Vector2:
-		var c := size / 2.0
-		var w := _wob(a, 0.075, 0.0)
-		return c + Vector2(cos(a) * (size.x * 0.5 - 10.0) * w, sin(a) * (size.y * 0.5 - 7.0) * w)
+		if _norm == 0.0:
+			for k in range(720):
+				_norm = maxf(_norm, _coast_f(TAU * k / 720.0))
+		var f := _coast_f(a) / _norm
+		return size / 2.0 + Vector2(cos(a) * _rx() * f, sin(a) * _ry() * f)
+	## The edge of the unclaimed highlands in the middle of the continent.
 	func _inner(a: float) -> Vector2:
-		var c := size / 2.0
-		var w := _wob(a, 0.11, 2.4)
-		return c + Vector2(cos(a) * size.x * 0.17 * w, sin(a) * size.y * 0.2 * w)
-	## A border from the sea to the outer coast, gently wandering.
+		var f := 1.0 + 0.12 * sin(3.0 * a + 0.9) + 0.08 * sin(5.0 * a + 2.0) + 0.05 * sin(11.0 * a + 0.2)
+		return size / 2.0 + Vector2(cos(a) * _rx() * 0.27 * f, sin(a) * _ry() * 0.31 * f)
+	func _lake(a: float) -> Vector2:
+		var f := 1.0 + 0.2 * sin(2.0 * a + 1.0) + 0.1 * sin(4.0 * a + 0.3) + 0.05 * sin(7.0 * a)
+		return size / 2.0 + Vector2(_rx() * 0.04, -_ry() * 0.05) + Vector2(cos(a) * _rx() * 0.1, sin(a) * _ry() * 0.11) * f
+	## Borders do not run straight out from the middle: each leans and wanders on its way to the coast.
+	func _lean(a: float) -> float:
+		return 0.14 * sin(2.0 * a + 1.0)
 	func _border(a: float) -> PackedVector2Array:
 		var pa := _inner(a)
-		var pb := _outer(a)
+		var pb := _outer(a + _lean(a))
 		var nrm := (pb - pa).orthogonal().normalized()
 		var out := PackedVector2Array()
-		for k in range(1, 8):
-			var t := k / 8.0
-			out.append(pa.lerp(pb, t) + nrm * sin(t * PI * 2.0 + a * 3.0) * 3.0 * sin(t * PI))
+		for k in range(1, 12):
+			var t := k / 12.0
+			var wig := sin(t * PI * 3.0 + a * 5.0) * 3.5 + sin(t * PI * 7.0 + a * 2.0) * 1.5
+			out.append(pa.lerp(pb, t) + nrm * wig * sin(t * PI))
 		return out
 	func _seat_angle(i: int, n: int) -> float:
 		return PI / 2.0 + TAU * i / n
 	func _capital(i: int, n: int) -> Vector2:
 		var a := _seat_angle(i, n)
-		return _inner(a).lerp(_outer(a), 0.5)
+		return _inner(a).lerp(_outer(a + _lean(a)), 0.52)
+	## A blob of land or water: centre, radii, a seed for its shape.
+	func _blob(c: Vector2, r: Vector2, seed_v: float, pts := 28) -> PackedVector2Array:
+		var out := PackedVector2Array()
+		for k in range(pts):
+			var a := TAU * k / pts
+			var f := 1.0 + 0.25 * sin(2.0 * a + seed_v) + 0.12 * sin(5.0 * a + seed_v * 2.3)
+			out.append(c + Vector2(cos(a) * r.x, sin(a) * r.y) * f)
+		return out
 
 	func _draw() -> void:
 		var n := seats.size()
@@ -371,16 +399,25 @@ class TableMap extends Control:
 				var a := TAU * k / 96.0
 				ring.append(c + (_outer(a) - c) * r)
 			draw_polyline(ring, Color(0.8, 0.74, 0.55, 0.16 if r < 1.1 else 0.08), 1.0, true)
+		# offshore islands
+		for isl in [[1.0, 1.16, 6.0, 4.0, 0.7], [4.35, 1.14, 7.0, 4.5, 2.1], [5.95, 1.15, 5.0, 3.5, 1.3], [2.75, 1.13, 4.0, 3.0, 3.3]]:
+			var ac: Vector2 = c + (_outer(isl[0]) - c) * isl[1]
+			ac = ac.clamp(Vector2(8, 8), size - Vector2(8, 8))
+			var bl := _blob(ac, Vector2(isl[2], isl[3]), isl[4])
+			_land(bl, Color(0.8, 0.78, 0.7))
+			draw_polyline(bl + PackedVector2Array([bl[0]]), COAST, 1.2, true)
 		# countries
-		var steps := 30
+		var steps := 40
 		for i in range(n):
 			var s: Dictionary = seats[i]
 			var a0 := _seat_angle(i, n) - PI / n
 			var a1 := _seat_angle(i, n) + PI / n
 			var poly := PackedVector2Array([_inner(a0)])
 			poly.append_array(_border(a0))
+			var o0 := a0 + _lean(a0)
+			var o1 := a1 + _lean(a1)
 			for k in range(steps + 1):
-				poly.append(_outer(lerpf(a0, a1, float(k) / steps)))
+				poly.append(_outer(lerpf(o0, o1, float(k) / steps)))
 			var b1 := _border(a1)
 			b1.reverse()
 			poly.append_array(b1)
@@ -398,40 +435,69 @@ class TableMap extends Control:
 					tint = Color(0.36, 0.34, 0.3)
 				elif s.turn:
 					tint = tint.lightened(0.22)
-				var uvs := PackedVector2Array()
-				for q in poly:
-					uvs.append(q / size)
-				draw_colored_polygon(poly, tint, uvs, land_tex)
+				_land(poly, tint)
 			else:
 				draw_colored_polygon(poly, fill)
 			if not s.alive:
 				_scorch(i, n)
-		# borders
+			# a river from the highlands to the sea, through the middle of the country
+			var am := _seat_angle(i, n) + 0.22 * TAU / n
+			var rs := _inner(am)
+			var re := _outer(am + _lean(am))
+			var rv := PackedVector2Array()
+			var rn := (re - rs).orthogonal().normalized()
+			for k in range(13):
+				var t := k / 12.0
+				rv.append(rs.lerp(re, t) + rn * sin(t * PI * 2.5 + i) * 4.0 * sin(t * PI))
+			draw_polyline(rv, Color(0.42, 0.55, 0.55, 0.75), 1.3, true)
+		# the unclaimed highlands in the middle, with their lake
+		var core := PackedVector2Array()
+		var lake := PackedVector2Array()
+		for k in range(96):
+			core.append(_inner(TAU * k / 96.0))
+			lake.append(_lake(TAU * k / 96.0))
+		_land(core, Color(0.55, 0.54, 0.5))      # unclaimed: no owner's colour, a shade darker
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 1947
+		for k in range(26):      # mountain marks, as on an old map
+			var aa := rng.randf() * TAU
+			var t := 0.15 + 0.75 * rng.randf()
+			var lp := _lake(aa)
+			var mp := lp.lerp(_inner(aa), t)
+			if mp.distance_to(lp) < 6.0 or mp.distance_to(_inner(aa)) < 5.0:
+				continue
+			var h := 3.0 + 2.0 * rng.randf()
+			draw_polyline(PackedVector2Array([mp + Vector2(-h, h * 0.6), mp + Vector2(0, -h * 0.7), mp + Vector2(h, h * 0.6)]), Color(0.1, 0.08, 0.05, 0.75), 1.3, true)
+			draw_line(mp + Vector2(0, -h * 0.7), mp + Vector2(h * 0.45, h * 0.1), Color(0.95, 0.9, 0.75, 0.5), 1.0, true)
+		if sea_tex != null:
+			var luv := PackedVector2Array()
+			for q in lake:
+				luv.append(q / size)
+			draw_colored_polygon(lake, Color(0.8, 0.85, 0.85), luv, sea_tex)
+		else:
+			draw_colored_polygon(lake, SEA)
+		draw_polyline(lake + PackedVector2Array([lake[0]]), COAST, 1.3, true)
+		draw_colored_polygon(_blob(_lake(0.0).lerp(size / 2.0 + Vector2(_rx() * 0.04, -_ry() * 0.05), 0.55), Vector2(3.0, 2.0), 2.0, 16), Color(0.55, 0.52, 0.42))
+		# borders (dashed), round the highlands and out to the coast
 		for i in range(n):
 			var a := _seat_angle(i, n) - PI / n
-			var b := PackedVector2Array([_inner(a)])
-			b.append_array(_border(a))
-			b.append(_outer(a))
-			for k in range(b.size() - 1):
+			var bd := PackedVector2Array([_inner(a)])
+			bd.append_array(_border(a))
+			bd.append(_outer(a + _lean(a)))
+			for k in range(bd.size() - 1):
 				if k % 2 == 0:
-					draw_line(b[k], b[k + 1], Color(0.06, 0.05, 0.03, 0.85), 1.4, true)
-		# coastlines
+					draw_line(bd[k], bd[k + 1], Color(0.06, 0.05, 0.03, 0.85), 1.4, true)
+		for k in range(0, core.size(), 2):
+			draw_line(core[k], core[(k + 1) % core.size()], Color(0.06, 0.05, 0.03, 0.6), 1.1, true)
+		# the coastline, with a little relief inside it
 		var oc := PackedVector2Array()
-		var ic := PackedVector2Array()
-		for k in range(145):
-			var a := TAU * k / 144.0
-			oc.append(_outer(a))
-			ic.append(_inner(a))
+		for k in range(361):
+			oc.append(_outer(TAU * k / 360.0))
 		draw_polyline(oc, COAST, 1.6, true)
-		draw_polyline(ic, COAST, 1.6, true)
 		var oc2 := PackedVector2Array()
-		for p in oc:
-			oc2.append(c + (p - c) * 0.93)
-		draw_polyline(oc2, Color(0.05, 0.04, 0.02, 0.18), 1.0, true)      # relief inside the coast
-		var ic2 := PackedVector2Array()
-		for p in ic:
-			ic2.append(c + (p - c) * 0.86)
-		draw_polyline(ic2, Color(0.8, 0.74, 0.55, 0.14), 1.0, true)
+		for q in oc:
+			oc2.append(c + (q - c) * 0.94)
+		draw_polyline(oc2, Color(0.05, 0.04, 0.02, 0.16), 1.0, true)
 		# ranges
 		var pts: Array = []
 		for i in range(n):
@@ -468,6 +534,16 @@ class TableMap extends Control:
 			draw_string_outline(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0.07, 0.06, 0.04, 0.85))
 			draw_string(font, lp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#f2e8cb") if s.alive else Color("#8d876d"))
 
+	## A patch of land: the painted terrain, washed with a colour.
+	func _land(poly: PackedVector2Array, tint: Color) -> void:
+		if land_tex == null:
+			draw_colored_polygon(poly, LAND * tint)
+			return
+		var uvs := PackedVector2Array()
+		for q in poly:
+			uvs.append(q / size)
+		draw_colored_polygon(poly, tint, uvs, land_tex)
+
 	## A tested country carries a small mushroom cloud beside its capital.
 	func _test_mark(p: Vector2) -> void:
 		var y := Color("#e9c977")
@@ -484,7 +560,7 @@ class TableMap extends Control:
 		var a := _seat_angle(i, n)
 		for k in range(7):
 			var aa := a + (rng.randf() - 0.5) * TAU / n * 0.7
-			var p := _inner(aa).lerp(_outer(aa), 0.2 + 0.6 * rng.randf())
+			var p := _inner(aa).lerp(_outer(aa + _lean(aa)), 0.2 + 0.6 * rng.randf())
 			var r := 1.5 + 3.0 * rng.randf()
 			draw_circle(p, r, Color(0.08, 0.07, 0.05, 0.8))
 			draw_arc(p, r + 0.8, PI, TAU, 8, Color(0.6, 0.55, 0.42, 0.35), 1.0, true)
@@ -1431,12 +1507,9 @@ func _on_event(t: String, d: Dictionary) -> void:
 		"give":
 			snd("deal")
 		"renege":
-			snd("broken")
+			snd("broken")      # the sound and the newspaper's red headline tell it; nothing pops up
 			if d.to == ME:
 				betrayals[d.p.id] = int(betrayals.get(d.p.id, 0)) + 1
-				_betrayed(d.p)
-			else:
-				_toast_red("%s broke a deal with %s!" % [d.p.name, d.to.name])
 		"turn":
 			if d.p == ME:
 				snd("your_turn")
@@ -1467,7 +1540,6 @@ func _pump() -> void:
 		_on_human_turn(tok)
 		return
 	var delay: float = ((AI_DELAY + _reading_time()) if ME.alive else (0.04 if ff else 0.26)) / speed
-	delay = maxf(delay, (hold_until - Time.get_ticks_msec()) / 1000.0)      # let a big moment sink in
 	await get_tree().create_timer(delay).timeout
 	if tok != pump_token or G == null:
 		return
@@ -2589,7 +2661,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "The table map")
-	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round an inland sea. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the sea to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
+	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round the unclaimed highlands at the heart of the continent. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the highlands to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 	_rules_h(vb, "Tips")
 	_rules_p(vb, "- Hover over any card to see it larger.\n- On a tablet or phone: [b]tap[/b] a card in your hand for its options, [b]hold[/b] it to see it large, and [b]drag[/b] it to trade. Tap a small card to enlarge it (tap anywhere to put it away); hold a button or a portrait to read its hint. Play in landscape - [b]Fullscreen[/b] gives the most room.\n- Press [b]F9[/b] for a debug view of what the other powers hold and think.")
 
@@ -2681,69 +2753,6 @@ func _fx(text: String, kind: String) -> void:
 	tw.tween_property(l, "scale", Vector2(1.1, 1.1), 0.5).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.tween_property(l, "modulate:a", 0.0, 0.5).set_delay(1.0)
 	tw.chain().tween_callback(root.queue_free)
-
-## Someone broke a deal with you: a rubber stamp slammed across the screen, their face, and what it cost.
-func _betrayed(p: NPGame.Player) -> void:
-	var red := Color("#d23a2a")
-	var root := Control.new()
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var flash := ColorRect.new()
-	flash.color = Color(0.45, 0.02, 0.0, 0.0)
-	flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(flash)
-	var cc := CenterContainer.new()
-	cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(cc)
-	var card := PanelContainer.new()
-	card.add_theme_stylebox_override("panel", _sb(Color(0.08, 0.06, 0.04, 0.93), red, 3, 10, 22))
-	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	cc.add_child(card)
-	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 22)
-	card.add_child(hb)
-	hb.add_child(_portrait(p, 110.0))
-	var vb := VBoxContainer.new()
-	vb.alignment = BoxContainer.ALIGNMENT_CENTER
-	vb.add_theme_constant_override("separation", 6)
-	hb.add_child(vb)
-	var stamp := PanelContainer.new()
-	stamp.add_theme_stylebox_override("panel", _sb(Color(0, 0, 0, 0), red, 5, 4, 8))
-	var sl := _lbl("DEAL BROKEN", 58, red, HEAD)
-	stamp.add_child(sl)
-	stamp.rotation = -0.07
-	vb.add_child(stamp)
-	vb.add_child(_lbl("%s kept the card promised to you." % p.name, 20, C_INK))
-	vb.add_child(_lbl("Your card is gone. Remember who you can trust.", 15, C_MUT, MONO))
-	fx_root.add_child(root)
-	hold_until = Time.get_ticks_msec() + 3000
-	await get_tree().process_frame
-	card.pivot_offset = card.size / 2.0
-	card.scale = Vector2(1.5, 1.5)
-	card.modulate.a = 0.0
-	var tw := root.create_tween().set_parallel(true)
-	tw.tween_property(flash, "color:a", 0.35, 0.12)
-	tw.tween_property(flash, "color:a", 0.0, 1.4).set_delay(0.12)
-	tw.tween_property(card, "modulate:a", 1.0, 0.1)
-	tw.tween_property(card, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_property(card, "modulate:a", 0.0, 0.5).set_delay(3.2)
-	tw.chain().tween_callback(root.queue_free)
-	_shake()
-
-func _toast_red(msg: String) -> void:
-	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _sb(Color("#3a120c"), Color("#d23a2a"), 2, 99, 10))
-	pc.add_child(_lbl(msg, 15, Color("#ffd9d2")))
-	fx_root.add_child(pc)
-	await get_tree().process_frame
-	var vp := get_viewport_rect().size
-	pc.position = Vector2((vp.x - pc.size.x) / 2.0, vp.y - 110.0)
-	var tw := pc.create_tween()
-	tw.tween_interval(3.0)
-	tw.tween_property(pc, "modulate:a", 0.0, 0.5)
-	tw.tween_callback(pc.queue_free)
 
 func _shake() -> void:
 	if game_root == null or not game_root.visible:
@@ -3504,8 +3513,7 @@ func _shots() -> void:
 	await _shot(d + "/7-honour.png")
 	betrayals[1] = 1
 	_render()
-	_betrayed(G.players[1])
-	await get_tree().create_timer(0.6).timeout
+	await get_tree().create_timer(0.4).timeout
 	await _shot(d + "/7d-betrayed.png")
 	betrayals.clear()
 	# a threat against me, my own threat menu, and the disarm confirmation
