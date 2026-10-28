@@ -833,6 +833,21 @@ func _return_caps(t: Player) -> Array:
 				names.append(INFO[c.key].name)
 	return names
 
+## Mutually Assured Destruction (the original rules): when every power still in the game is a
+## Superpower, any of them can declare MAD, and all of them win.
+func can_declare_mad(p: Player) -> bool:
+	if over or not p.alive or not prompt.is_empty() or counter_q.size() > 0:
+		return false
+	var al := alive_list()
+	return al.size() >= 2 and al.all(func(x): return is_superpower(x))
+
+func declare_mad(p: Player) -> bool:
+	if not can_declare_mad(p):
+		return false
+	log_msg("%s declares MUTUALLY ASSURED DESTRUCTION: every power can destroy every other - so none will. All win." % p.name, "reveal")
+	end_game("mad")
+	return true
+
 ## Voluntary disarmament is open to a declared nuclear power - one that has made its Nuclear Test -
 ## holding Capability cards to give up.
 func can_disarm(p: Player) -> bool:
@@ -1272,6 +1287,9 @@ func step() -> String:
 	var s := status()
 	if s == "over" or s == "prompt" or s == "human":
 		return s
+	var actor := by_id(war_actor()) if phase == "war" else cur()
+	if declare_mad(actor):      # every survivor is a Superpower: the AI calls it and all win
+		return "ok"
 	if phase == "honour":
 		ai_honour(cur())
 	elif phase == "play":

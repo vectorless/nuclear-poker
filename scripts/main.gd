@@ -1535,7 +1535,7 @@ func _on_event(t: String, d: Dictionary) -> void:
 				snd("your_turn")
 		"over":
 			_ambience(false)
-			snd("standdown" if d.kind in ["ceasefire", "stalemate"] else "game_over")
+			snd("standdown" if d.kind in ["ceasefire", "stalemate", "mad"] else "game_over")
 
 # ====================================================================== driver
 func _pump() -> void:
@@ -1651,6 +1651,14 @@ func _render_top() -> void:
 		db.pressed.connect(_disarm_modal)
 		topbar.add_child(db)
 		btn["disarm"] = db
+	if G.can_declare_mad(ME):      # every survivor is a Superpower
+		var mb := _btn("Declare MAD", "primary", 13)
+		mb.tooltip_text = "Every power left can destroy every other. Declare Mutually Assured Destruction: the game ends and all win."
+		mb.pressed.connect(func():
+			G.declare_mad(ME)
+			_pump())
+		topbar.add_child(mb)
+		btn["mad"] = mb
 	var cf := _btn("Propose stand-down", "default", 13)
 	cf.disabled = G.over or not ME.alive
 	if not cf.disabled and not G.can_propose_ceasefire(ME):
@@ -2703,7 +2711,7 @@ func _card_row(vb: VBoxContainer, keys: Array, notes: Array) -> void:
 	vb.add_child(fl)
 
 func _rules_classic(vb: VBoxContainer) -> void:
-	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, when everyone agrees to stand down - or in a [b]stalemate[/b], when the draw pile is empty and a full round passes without anyone drawing, testing, striking, trading or disarming.")
+	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, when everyone agrees to stand down, when every power left is a Superpower and one declares [b]Mutually Assured Destruction[/b] (all win) - or in a [b]stalemate[/b], when the draw pile is empty and a full round passes without anyone drawing, testing, striking, trading or disarming.")
 	_rules_h(vb, "Goal")
 	_rules_p(vb, "You are a country trying to become a [b]Nuclear Superpower[/b]. First [b]test a nuclear weapon[/b] with the four Technology cards, then collect the four Capability cards.")
 	_rules_h(vb, "Technology cards - the Nuclear Test")
@@ -2729,6 +2737,8 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window): name a player you could attack. They must return [b]all their Capability cards[/b] to the deck - or refuse. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The other powers may disarm too once they have tested, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
+	_rules_h(vb, "Mutually Assured Destruction")
+	_rules_p(vb, "When [b]every power still in the game is a Superpower[/b], any of them can declare Mutually Assured Destruction: each can destroy all the others, so none will. The game ends and [b]all survivors win[/b]. When it is open to you, [b]Declare MAD[/b] appears in the top bar - but the other powers can call it too.")
 	_rules_h(vb, "The table map")
 	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round the unclaimed highlands at the heart of the continent. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the highlands to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 	_rules_h(vb, "Tips")
@@ -2757,6 +2767,10 @@ func _end_modal() -> void:
 		good = w == ME
 		title = "You are the last one standing" if good else "%s is the last power standing" % w.name
 		sub = "You survived. Look at what it cost." if good else "The rest of the table is gone."
+	elif r.kind == "mad":
+		title = "Mutually Assured Destruction"
+		sub = "Every power left can destroy every other - so none will. All %d survivors win." % alive.size()
+		good = ME.alive
 	elif r.kind == "stalemate":
 		title = "Stalemate"
 		sub = "The draw pile ran dry and nobody could - or would - move again. %d of %d powers survive." % [alive.size(), G.players.size()]
