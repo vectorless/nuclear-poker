@@ -1316,7 +1316,7 @@ func _build_menu() -> Control:
 	btn["fs_menu"] = fsm
 	left.add_child(row)
 	btn["begin"] = begin
-	var cred := _rtl("Game design by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url]) · card designs inspired by [b]Ian Willey[/b] · print-and-play v4.2 by [b]Jonathan Korman[/b] ([url=https://miniver.itch.io/nuclear-poker]miniver.itch.io[/url]). Unofficial digital adaptation. \"The only winning move is not to play.\"", 12, C_MUT)
+	var cred := _rtl("Game design by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url]) · card designs inspired by [b]Ian Willey[/b] · print-and-play v4.2 by [b]Jonathan Korman[/b] ([url=https://miniver.itch.io/nuclear-poker]miniver.itch.io[/url]). Original game by [b]Vinay Gupta[/b] ([url=mailto:VinayGupta@butteredsidedown.co.uk]VinayGupta@butteredsidedown.co.uk[/url]) & [b]Dan Carter[/b] ([url=https://files.howtolivewiki.com/nuclear_poker_card_game_proliferation.pdf]original rules, PDF[/url]), GNU FDL licensed; includes images from Wikimedia. Unofficial digital adaptation. \"The only winning move is not to play.\"", 12, C_MUT)
 	cred.meta_clicked.connect(func(m): OS.shell_open(str(m)))
 	right.add_child(cred)
 	_refresh_opts()
