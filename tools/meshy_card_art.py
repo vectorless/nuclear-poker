@@ -60,11 +60,12 @@ MAP = {
 }
 
 
-BURN = ("Photographed flat from directly above: a single sheet of plain off-white paper, badly burned. Ragged "
-        "charred black edges eaten away all round, one burnt-through hole near a corner with a glowing-brown "
-        "rim, brown scorch marks and soot creeping in from the edges, the middle of the sheet still clean and "
-        "blank. The sheet fills most of the frame and lies on a solid flat pure bright green background "
-        "(chroma key), visible through the burnt edges and the hole. No text, no shadows, no other objects.")
+BURN = ("Photographed flat from directly above: a single sheet of plain off-white card, burned almost to a crisp. "
+        "Most of it charred black and dark brown, blistered and cracked, its edges eaten deep into the sheet and "
+        "crumbling to grey ash, two or three large burnt-through holes with glowing orange ember rims; only an "
+        "irregular patch in the middle is still pale, scorched paper. The sheet fills most of the frame and lies on a "
+        "solid flat pure bright green background (chroma key), visible through the burnt edges and holes. No text, "
+        "no shadows, no other objects.")
 
 
 def find_key(args):
@@ -126,7 +127,7 @@ def main():
     if burn:
         out = os.path.join(ROOT, "assets", "ww2", "art", "burn")
         os.makedirs(out, exist_ok=True)
-    for name in args or (["burn_1", "burn_2"] if burn else list(MAP if maps else SUBJECTS)):     # start them all, then collect
+    for name in args or (["burn_1", "burn_2", "burn_3"] if burn else list(MAP if maps else SUBJECTS)):     # start them all, then collect
         path = os.path.join(out, name + (".jpg" if maps else ".png"))
         if os.path.exists(path) and not force:
             print(name, "exists")

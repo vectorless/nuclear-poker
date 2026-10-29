@@ -288,7 +288,7 @@ def burn_card(card, burn, flip=False):
     burnt away - becomes transparent, the sheet's browns and blacks are multiplied into the card."""
     b = np.asarray(burn.convert("RGB")).astype(float)
     r, g, bl = b[..., 0], b[..., 1], b[..., 2]
-    green = (g > 120) & (g > r * 1.4) & (g > bl * 1.4)
+    green = (g > 120) & (g - np.maximum(r, bl) > 25)      # also a pale, washed-out green screen
     ys, xs = np.nonzero(~green)
     im = burn.convert("RGB").crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
     if flip:
@@ -296,7 +296,7 @@ def burn_card(card, burn, flip=False):
     im = im.resize(card.size, Image.LANCZOS)
     b = np.asarray(im).astype(float)
     r, g, bl = b[..., 0], b[..., 1], b[..., 2]
-    gone = ((g > 120) & (g > r * 1.4) & (g > bl * 1.4)).astype(float)
+    gone = ((g > 120) & (g - np.maximum(r, bl) > 25)).astype(float)
     b[..., 1] = np.minimum(g, np.maximum(r, bl))      # take the green spill off the charred rim
     white = np.percentile(b[gone < 0.5].reshape(-1, 3), 92, axis=0)
     tone = np.clip(b / white, 0.0, 1.0)

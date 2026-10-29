@@ -42,6 +42,7 @@ var speed := 1.0                  # >1 only in the automated test
 var paused := 0
 var pump_token := 0
 var end_shown := false
+var mad_pic := -1      # which front-page photograph the MAD ending shows this game (MAD_PICS)
 var muted := false
 var ff := false
 var fresh := {}
@@ -83,6 +84,8 @@ var zoom: TextureRect = null      # enlarged copy of the card under the pointer
 var zoom_last_key := ""           # the card it showed, and when it went (to re-show without a flicker)
 var zoom_last_ms := 0
 var betrayals := {}               # player id -> how many deals they have broken with you
+var died_at := {}                 # player id -> Time.get_ticks_msec() of their death, for the bones' fall
+var BONES: Array = []             # charred bone piles (assets/ui/bones/, tools/meshy_bones.py)
 # touch screens (tablets, phones): taps are clicks, and touching stands in for hovering
 var touch := false
 var touch_at := Vector2.ZERO
@@ -942,9 +945,13 @@ func _ready() -> void:
 		TEX[k] = load("res://assets/ww2/%s.png" % k)
 		if ResourceLoader.exists("res://assets/ww2/burnt/%s.png" % k):
 			TEXB[k] = load("res://assets/ww2/burnt/%s.png" % k)
+	for i in range(1, 7):
+		if ResourceLoader.exists("res://assets/ui/bones/pile_%d.png" % i):
+			BONES.append(load("res://assets/ui/bones/pile_%d.png" % i))
 	CardBack.tex = load("res://assets/ww2/back.png")
 	_load_cfg()
-	if bool(cfg.fullscreen) and not OS.has_feature("web") and DisplayServer.get_name() != "headless":
+	# (never for the test and screenshot modes: they capture a fixed-size window)
+	if bool(cfg.fullscreen) and not OS.has_feature("web") and DisplayServer.get_name() != "headless" and OS.get_cmdline_user_args().is_empty():
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 	_build_sounds()
 	var bg := ColorRect.new()
@@ -985,6 +992,8 @@ func _ready() -> void:
 		_autotest.call_deferred()
 	elif "--shots" in OS.get_cmdline_user_args():
 		_shots.call_deferred()
+	elif "--madshots" in OS.get_cmdline_user_args():
+		_madshots.call_deferred()
 	elif "--dragtest" in OS.get_cmdline_user_args():
 		_dragtest.call_deferred()
 
@@ -1482,7 +1491,9 @@ func _start_game() -> void:
 	G.setup({"players": plist})
 	ME = G.players[0]
 	end_shown = false
+	mad_pic = -1
 	betrayals.clear()
+	died_at.clear()
 	ff = false
 	fresh.clear()
 	paused = 0
@@ -1506,6 +1517,7 @@ func _on_event(t: String, d: Dictionary) -> void:
 			_fx("Launch Detected", "attack")
 			snd("attack")
 		"death":
+			died_at[d.p.id] = Time.get_ticks_msec()
 			_fx("You are eliminated" if d.p == ME else d.p.name + " eliminated", "death")
 			snd("death")
 			_shake()
@@ -1651,14 +1663,6 @@ func _render_top() -> void:
 		db.pressed.connect(_disarm_modal)
 		topbar.add_child(db)
 		btn["disarm"] = db
-	if G.can_declare_mad(ME):      # every survivor is a Superpower
-		var mb := _btn("Declare MAD", "primary", 13)
-		mb.tooltip_text = "Every power left can destroy every other. Declare Mutually Assured Destruction: the game ends and all win."
-		mb.pressed.connect(func():
-			G.declare_mad(ME)
-			_pump())
-		topbar.add_child(mb)
-		btn["mad"] = mb
 	var cf := _btn("Propose stand-down", "default", 13)
 	cf.disabled = G.over or not ME.alive
 	if not cf.disabled and not G.can_propose_ceasefire(ME):
@@ -1755,6 +1759,101 @@ func _trade_items_for(p: NPGame.Player) -> Array:
 				# face down: you see only your own cards; everyone else's are backs until they arrive
 				res.append({"c": c, "label": label, "tip": tip, "mine": q == ME, "seen": seen})
 	return res
+
+## What is left of you once you are destroyed by a nuclear attack: a smouldering pile of charred bones
+## in your trade area. Just after the death it drops in and settles in a burst of embers; then it smoulders on.
+func _bones(p: NPGame.Player, w: float) -> Control:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _sb(Color("#140f0be6"), Color("#4a2a1a"), 1, 8, 6))
+	pc.custom_minimum_size.y = w * 430.0 / 330.0 + 36.0      # as tall as a trade area, so seats line up
+	pc.clip_contents = true
+	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var box := Control.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc.add_child(box)
+	if BONES.is_empty():
+		return pc
+	var pile := TextureRect.new()
+	pile.texture = BONES[p.id % BONES.size()]
+	pile.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pile.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pile.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	pile.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	pile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pile.tooltip_text = "%s - destroyed" % p.name
+	box.add_child(pile)
+	var smoke := _smoulder(false)
+	var embers := _smoulder(true)
+	box.add_child(smoke)
+	box.add_child(embers)
+	box.resized.connect(func():
+		pile.pivot_offset = Vector2(box.size.x / 2.0, box.size.y)
+		smoke.position = Vector2(box.size.x / 2.0, box.size.y * 0.55)
+		embers.position = Vector2(box.size.x / 2.0, box.size.y * 0.8)
+		smoke.emission_rect_extents = Vector2(box.size.x * 0.2, 4)
+		embers.emission_rect_extents = Vector2(box.size.x * 0.3, 3))
+	# the embers in the ashes glow and fade, on and on
+	var glow := pile.create_tween().set_loops()
+	glow.tween_property(pile, "modulate", Color(1.18, 1.0, 0.86), 0.9 + randf() * 0.5).set_trans(Tween.TRANS_SINE)
+	glow.tween_property(pile, "modulate", Color(0.92, 0.9, 0.88), 1.1 + randf() * 0.5).set_trans(Tween.TRANS_SINE)
+	var age := Time.get_ticks_msec() - int(died_at.get(p.id, -100000))
+	if age < 1500:      # just destroyed: the pile falls into place
+		pile.scale = Vector2(0.4, 0.4)
+		pile.position.y = -40.0
+		pile.self_modulate.a = 0.0
+		var tw := pile.create_tween().set_parallel(true)
+		tw.tween_property(pile, "self_modulate:a", 1.0, 0.25)
+		tw.tween_property(pile, "scale", Vector2.ONE, 0.7).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+		tw.tween_property(pile, "position:y", 0.0, 0.7).set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+		embers.amount = 40
+		embers.explosiveness = 0.6
+	return pc
+
+## Smoke curling up from a bone pile (`sparks` false) or embers spitting out of it (true).
+func _smoulder(sparks: bool) -> CPUParticles2D:
+	var e := CPUParticles2D.new()
+	e.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	e.direction = Vector2(0, -1)
+	e.gravity = Vector2(0, -6 if not sparks else 30)
+	var g := Gradient.new()
+	if sparks:
+		e.amount = 14
+		e.lifetime = 1.4
+		e.spread = 50.0
+		e.initial_velocity_min = 12.0
+		e.initial_velocity_max = 40.0
+		e.scale_amount_min = 1.5
+		e.scale_amount_max = 3.0
+		g.set_color(0, Color(1.0, 0.75, 0.3, 1.0))
+		g.set_color(1, Color(0.8, 0.2, 0.05, 0.0))
+	else:
+		e.amount = 10
+		e.lifetime = 3.2
+		e.preprocess = 3.2      # already smoking when the seat is redrawn
+		e.spread = 14.0
+		e.initial_velocity_min = 8.0
+		e.initial_velocity_max = 16.0
+		var dot := GradientTexture2D.new()
+		dot.fill = GradientTexture2D.FILL_RADIAL
+		dot.fill_from = Vector2(0.5, 0.5)
+		dot.fill_to = Vector2(1.0, 0.5)
+		dot.width = 32
+		dot.height = 32
+		var dg := Gradient.new()
+		dg.set_color(0, Color(1, 1, 1, 0.55))
+		dg.set_color(1, Color(1, 1, 1, 0.0))
+		dot.gradient = dg
+		e.texture = dot
+		e.scale_amount_min = 0.5
+		e.scale_amount_max = 1.1
+		var grow := Curve.new()
+		grow.add_point(Vector2(0, 0.4))
+		grow.add_point(Vector2(1, 1.6))
+		e.scale_amount_curve = grow
+		g.set_color(0, Color(0.55, 0.52, 0.48, 0.5))
+		g.set_color(1, Color(0.4, 0.38, 0.36, 0.0))
+	e.color_ramp = g
+	return e
 
 func _trade_zone(p: NPGame.Player, w: float) -> Control:
 	# Drop a card here: on another player's trade space to offer it to them,
@@ -2139,7 +2238,7 @@ func _me_panel() -> Control:
 	var gw := 40.0
 	for i in range(8):
 		if i < ME.table.size():
-			grid.add_child(_tex(ME.table[i].key, gw))
+			grid.add_child(_tex(ME.table[i].key, gw, not ME.alive))
 		else:
 			var ph := PanelContainer.new()
 			ph.custom_minimum_size = Vector2(gw, gw * 430.0 / 330.0)
@@ -2147,7 +2246,7 @@ func _me_panel() -> Control:
 			grid.add_child(ph)
 	tb.add_child(grid)
 	row.add_child(tb)
-	var tz := _trade_zone(ME, mini_w * 1.35)
+	var tz := _trade_zone(ME, mini_w * 1.35) if ME.alive else _bones(ME, mini_w * 1.35)
 	tz.custom_minimum_size.x = 250
 	tz.size_flags_horizontal = Control.SIZE_SHRINK_END
 	tz.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -2175,16 +2274,11 @@ func _me_panel() -> Control:
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		hc.add_child(face)
 		hc.face = face
-		var t := _tex(c.key, hv.cw)
+		var t := _tex(c.key, hv.cw, not ME.alive)      # destroyed: your hand lies burnt to a crisp
 		t.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		t.tooltip_text = ""
 		face.add_child(t)
-		if c.pub:
-			var mk := _badge("REVEALED", C_AMBER, Color(0, 0, 0, 0.75), Color(0, 0, 0, 0))
-			mk.position = Vector2(4, hv.ch - 24)
-			mk.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			face.add_child(mk)
 		hc.can_drag = _can_offer() or _answering()
 		hc.preview = _drag_preview.bind(c.key)
 		hc.tex = TEX[c.key]
@@ -2711,7 +2805,7 @@ func _card_row(vb: VBoxContainer, keys: Array, notes: Array) -> void:
 	vb.add_child(fl)
 
 func _rules_classic(vb: VBoxContainer) -> void:
-	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, when everyone agrees to stand down, when every power left is a Superpower and one declares [b]Mutually Assured Destruction[/b] (all win) - or in a [b]stalemate[/b], when the draw pile is empty and a full round passes without anyone drawing, testing, striking, trading or disarming.")
+	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, when everyone agrees to stand down, when every power left is a Superpower - [b]Mutually Assured Destruction[/b], and all win - or in a [b]stalemate[/b], when the draw pile is empty and a full round passes without anyone drawing, testing, striking, trading or disarming.")
 	_rules_h(vb, "Goal")
 	_rules_p(vb, "You are a country trying to become a [b]Nuclear Superpower[/b]. First [b]test a nuclear weapon[/b] with the four Technology cards, then collect the four Capability cards.")
 	_rules_h(vb, "Technology cards - the Nuclear Test")
@@ -2738,7 +2832,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "Mutually Assured Destruction")
-	_rules_p(vb, "When [b]every power still in the game is a Superpower[/b], any of them can declare Mutually Assured Destruction: each can destroy all the others, so none will. The game ends and [b]all survivors win[/b]. When it is open to you, [b]Declare MAD[/b] appears in the top bar - but the other powers can call it too.")
+	_rules_p(vb, "The moment [b]every power still in the game is a Superpower[/b], the game ends in Mutually Assured Destruction: each can destroy all the others, so none will - and [b]all survivors win[/b].")
 	_rules_h(vb, "The table map")
 	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round the unclaimed highlands at the heart of the continent. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the highlands to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 	_rules_h(vb, "Tips")
@@ -2755,6 +2849,9 @@ func _finish() -> void:
 
 func _end_modal() -> void:
 	var r := G.result
+	if r.kind == "mad":
+		_mad_modal()
+		return
 	var alive: Array = r.survivors.map(func(i): return G.players[i])
 	var title := ""
 	var sub := ""
@@ -2767,10 +2864,6 @@ func _end_modal() -> void:
 		good = w == ME
 		title = "You are the last one standing" if good else "%s is the last power standing" % w.name
 		sub = "You survived. Look at what it cost." if good else "The rest of the table is gone."
-	elif r.kind == "mad":
-		title = "Mutually Assured Destruction"
-		sub = "Every power left can destroy every other - so none will. All %d survivors win." % alive.size()
-		good = ME.alive
 	elif r.kind == "stalemate":
 		title = "Stalemate"
 		sub = "The draw pile ran dry and nobody could - or would - move again. %d of %d powers survive." % [alive.size(), G.players.size()]
@@ -2795,6 +2888,9 @@ func _end_modal() -> void:
 		pc.add_child(hb)
 		vb.add_child(pc)
 	vb.add_child(_lbl("\"The only winning move is not to play.\"", 14, C_AMBER, MONO))
+	_end_buttons(vb)
+
+func _end_buttons(vb: VBoxContainer) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var again := _btn("Play again", "primary")
@@ -2809,6 +2905,91 @@ func _end_modal() -> void:
 	row.add_child(chg)
 	vb.add_child(row)
 	modal_btns.append({"kind": "again", "button": again})
+
+## Mutually Assured Destruction: a special edition of The Atomic Herald. The photograph
+## (assets/ui/mad/<pic>.jpg, from tools/meshy_mad.py) is picked at random, once per game.
+const MAD_PICS := [
+	{"pic": "warroom", "sub": "Every power can destroy all the others - so none will. All win.", "cap": "Each with a hand on the button. Nobody presses."},
+	{"pic": "standoff", "sub": "Everyone aims. Nobody fires. All win.", "cap": "Each man covers another. Nobody dares to fire first."},
+	{"pic": "silos", "sub": "Armed to the teeth, and perfectly still. All win.", "cap": "Ready to fly at a moment's notice. The moment never comes."},
+	{"pic": "clock", "sub": "One minute to midnight - and the hands have stopped. All win.", "cap": "The city sleeps beneath the searchlights."},
+	{"pic": "hands", "sub": "Nobody blinks. All win.", "cap": "Four hands, four buttons. Not one of them moves."},
+	{"pic": "scales", "sub": "The scales are level. All win - as long as nobody breathes.", "cap": "Held in perfect balance: enough to end the world, many times over."},
+	{"pic": "banquet", "sub": "The powers toast a peace that rests on the end of the world. All win.", "cap": "A toast to the balance of terror."},
+]
+
+func _mad_modal() -> void:
+	if mad_pic < 0:
+		mad_pic = randi() % MAD_PICS.size()
+	var m: Dictionary = MAD_PICS[mad_pic]
+	var ink := Color("#1f1b14")
+	var paper_font: Font = load("res://fonts/OldStandard-Regular.woff2")
+	var bold_font: Font = load("res://fonts/OldStandard-Bold.woff2")
+	var ital_font: Font = load("res://fonts/OldStandard-Italic.woff2")
+	var vb := _open_modal("", false, false, false)
+	_close_btn(vb, "X")      # close to look at the final board; "Show results" brings this back
+	var pn: PanelContainer = modal_scroll.get_parent()
+	var tx := StyleBoxTexture.new()
+	tx.texture = load("res://assets/ui/newsprint.png")
+	tx.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	tx.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	tx.set_content_margin_all(22)
+	pn.add_theme_stylebox_override("panel", tx)
+	vb.add_theme_constant_override("separation", 6)
+	var centred := func(text: String, size: int, font: Font, wrap := false) -> Label:
+		var l := _lbl(text, size, ink, font, wrap)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vb.add_child(l)
+		return l
+	centred.call("The Atomic Herald", 44, load("res://fonts/UnifrakturCook-Bold.woff2"))
+	vb.add_child(_rule(ink, 3.0))
+	var dl := HBoxContainer.new()
+	dl.add_child(_lbl("SPECIAL EDITION", 12, ink, paper_font))
+	dl.add_child(_spacer())
+	dl.add_child(_lbl("ROUND %d" % G.round_no, 12, ink, paper_font))
+	dl.add_child(_spacer())
+	dl.add_child(_lbl("ONE CENT", 12, ink, paper_font))
+	vb.add_child(dl)
+	vb.add_child(_rule(ink, 1.0))
+	vb.add_child(_rule(ink, 1.0, 2))
+	centred.call("BALANCE OF TERROR", 54 if pn.custom_minimum_size.x > 600.0 else 34, HEAD)
+	centred.call(str(m.sub), 18, ital_font, true)
+	var pic := TextureRect.new()
+	pic.texture = load("res://assets/ui/mad/%s.jpg" % m.pic)
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	pic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	var tsz: Vector2 = pic.texture.get_size()
+	pic.custom_minimum_size.y = minf((pn.custom_minimum_size.x - 44.0) * tsz.y / tsz.x, get_viewport_rect().size.y * 0.34)
+	vb.add_child(pic)
+	centred.call(str(m.cap), 13, ital_font, true)
+	vb.add_child(_rule(ink, 2.0))
+	# the victors: every power still at the table
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 22)
+	for p in G.players:
+		if not p.alive:
+			continue
+		var cell := VBoxContainer.new()
+		cell.alignment = BoxContainer.ALIGNMENT_CENTER
+		var ph := _portrait(p, 84)
+		ph.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		cell.add_child(ph)
+		for t in [[p.name + (" (you)" if p == ME and p.name != "You" else ""), 15, bold_font], ["SUPERPOWER", 11, paper_font]]:
+			var l := _lbl(t[0], t[1], ink, t[2])
+			l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			cell.add_child(l)
+		row.add_child(cell)
+	vb.add_child(row)
+	var fallen: Array = []
+	for p in G.players:
+		if not p.alive:
+			fallen.append(p.name + ((", eliminated by " + G.players[p.eliminated_by].name) if p.eliminated_by >= 0 else ""))
+	if not fallen.is_empty():
+		centred.call("Not at the table: %s." % "; ".join(fallen), 13, paper_font, true)
+	centred.call("\"The only winning move is not to play.\"", 15, MONO)
+	_end_buttons(vb)
 
 # ====================================================================== effects
 func _fx(text: String, kind: String) -> void:
@@ -3551,6 +3732,41 @@ func _readme_shot() -> void:
 var scroll_to_me := func():
 	board_scroll.scroll_vertical = 0
 
+## The Mutually Assured Destruction front page, once with each of its photographs.
+func _madshots() -> void:
+	var d := "/tmp/gshots2"
+	DirAccess.make_dir_recursive_absolute(d)
+	# a destroyed power: burnt hand, its bones falling into its trade area, then smouldering
+	await _stage("4", ["uranium", "short", "warhead"], false)
+	G.kill([G.players[2]], {G.players[2].id: G.players[1]})
+	G.settle()
+	_render()
+	await get_tree().create_timer(0.25).timeout
+	await _shot(d + "/12-bones-falling.png")
+	await get_tree().create_timer(2.5).timeout
+	await _shot(d + "/12-bones.png")
+	# and you: your own hand burnt, your bones in your trade area
+	G.kill([ME], {ME.id: G.players[1]})
+	G.settle()
+	_render()
+	await get_tree().create_timer(2.5).timeout
+	await _shot(d + "/12-bones-you.png")
+	await _stage("5", ["uranium", "short", "warhead"], false)
+	G.kill([G.players[3]], {G.players[3].id: G.players[1]})
+	G.settle()
+	G.end_game("mad")
+	for i in range(MAD_PICS.size()):
+		mad_pic = i
+		_end_modal()
+		await get_tree().create_timer(0.6).timeout
+		await _shot(d + "/11-mad-%s.png" % MAD_PICS[i].pic)
+		if i == 0:
+			modal_scroll.scroll_vertical = 2000
+			await get_tree().create_timer(0.3).timeout
+			await _shot(d + "/11-mad-bottom.png")
+	print("MAD SHOTS DONE")
+	get_tree().quit(0)
+
 func _shots() -> void:
 	var d := "/tmp/gshots2"
 	DirAccess.make_dir_recursive_absolute(d)
@@ -3677,6 +3893,7 @@ func _shots() -> void:
 	await get_tree().create_timer(0.4).timeout
 	await _shot(d + "/7d-betrayed.png")
 	betrayals.clear()
+	died_at.clear()
 	# a threat against me, my own threat menu, and the disarm confirmation
 	G.debts = []
 	G.turn = 1

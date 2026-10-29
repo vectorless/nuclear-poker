@@ -64,12 +64,10 @@ func _init() -> void:
 	g = game([full, full, ["uranium"], []])
 	g.do_test(g.players[0])
 	g.do_test(g.players[1])
-	check(not g.can_declare_mad(g.players[0]), "no MAD while a power left is not a Superpower")
+	g.check_over()
+	check(not g.over, "no MAD while a power left is not a Superpower")
 	g.kill([g.players[2], g.players[3]], {})
-	check(g.can_declare_mad(g.players[0]) and g.can_declare_mad(g.players[1]), "every power left a Superpower: any of them can declare MAD")
-	g.turn = 1
-	g.phase = "play"
-	g.step()
-	check(g.over and g.result.kind == "mad" and g.result.survivors.size() == 2, "an AI Superpower declares it, and both survivors win (%s)" % g.result.get("kind", "-"))
+	g.settle()
+	check(g.over and g.result.kind == "mad" and g.result.survivors.size() == 2, "the moment every power left is a Superpower: MAD, and both survivors win (%s)" % g.result.get("kind", "-"))
 	print("RULES TEST ", "ALL OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)
