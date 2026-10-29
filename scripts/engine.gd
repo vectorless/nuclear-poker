@@ -72,8 +72,9 @@ var trust: Dictionary = {}
 # attacking or threatening again (a breach of faith).
 var disarmed: Dictionary = {}
 # Stalemate: the turn_no at which the table last changed (a draw, test, attack, death, completed or
-# broken deal, disarmament). With the draw pile empty and nothing changing for a full round, it ends.
+# broken deal, disarmament). With the draw pile empty and nothing changing for three full rounds (STALEMATE_ROUNDS), it ends.
 var last_progress: int = 1
+const STALEMATE_ROUNDS := 3
 
 func _progress() -> void:
 	last_progress = turn_no
@@ -501,12 +502,11 @@ func end_turn() -> void:
 	if not _debts_of(cur()).is_empty():
 		phase = "honour"
 	if deck.is_empty() and not over:
-		# Stalemate: nothing left to draw, and a full round (two when you are still playing, so you
-		# get your chance) has gone by without anyone testing, striking, trading or disarming.
+		# Stalemate: nothing left to draw, and three full rounds have gone by without anyone testing,
+		# striking, trading or disarming - as long after you are out as while you are still playing.
 		var al := alive_list()
-		var rounds := 2 if al.any(func(x): return x.human) else 1
-		if turn_no - last_progress > al.size() * rounds:
-			log_msg("The draw pile is empty and nothing has changed for a full round: no one can - or will - make another move. Stalemate.")
+		if turn_no - last_progress > al.size() * STALEMATE_ROUNDS:
+			log_msg("The draw pile is empty and nothing has changed for three full rounds: no one can - or will - make another move. Stalemate.")
 			end_game("stalemate")
 			return
 	if turn_no > 500 and not over:
