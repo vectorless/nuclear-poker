@@ -20,7 +20,7 @@ func _batch(np: int, sets: Array) -> int:
 	var fails := 0
 	var st := {"games": 0, "turns": 0, "last": 0, "annih": 0, "cease": 0, "stale": 0, "mad": 0, "t500": 0, "maxT": 0, "deaths": 0}
 	var kinds := {"short": 0, "long": 0, "super": 0, "counter": 0, "test": 0}
-	var trades := {"offers": 0, "honoured": 0, "reneged": 0, "threats": 0, "gave_in": 0, "refused": 0, "disarmed": 0, "grudge_hits": 0, "condemned": 0, "breaches": 0}
+	var trades := {"offers": 0, "honoured": 0, "reneged": 0, "threats": 0, "demands": 0, "paid": 0, "gave_in": 0, "refused": 0, "disarmed": 0, "grudge_hits": 0, "condemned": 0, "breaches": 0}
 	for seed_i in range(1, 201):
 		var personas: Array = sets[seed_i % sets.size()]
 		var plist: Array = []
@@ -52,6 +52,10 @@ func _batch(np: int, sets: Array) -> int:
 					trades.reneged += 1
 				elif d.text.contains(" threatens "):
 					trades.threats += 1
+					if d.text.contains("hand over a card"):
+						trades.demands += 1
+				elif d.text.contains("gives in and hands"):
+					trades.paid += 1
 				elif d.text.contains("gives in and returns"):
 					trades.gave_in += 1
 				elif d.text.contains("REFUSES"):
@@ -117,7 +121,7 @@ func _batch(np: int, sets: Array) -> int:
 			_: st.cease += 1
 		if g.turn_no > 500:
 			st.t500 += 1
-	print("stalemates=%d mutually-assured-destruction=%d hit-500-turn-limit=%d" % [st.stale, st.mad, st.t500])
+	print("stalemates=%d mutually-assured-destruction=%d hit-500-turn-limit=%d card-demands=%d handed-over=%d" % [st.stale, st.mad, st.t500, trades.demands, trades.paid])
 	print("classic n=%d games=%d avgTurns=%.1f max=%d last=%d annih=%d standdown=%d avgDeaths=%.2f tests=%d short=%d long=%d super=%d counter=%d trades=%d honoured=%d reneged=%d threats=%d gave_in=%d refused=%d grudge_attacks=%d disarmed=%d condemned=%d breaches=%d" % [
 		np, st.games, float(st.turns) / maxf(1.0, st.games), st.maxT, st.last, st.annih, st.cease,
 		float(st.deaths) / maxf(1.0, st.games), kinds.test, kinds.short, kinds.long, kinds.super, kinds.counter,

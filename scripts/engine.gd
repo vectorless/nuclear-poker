@@ -58,7 +58,7 @@ var trade_tried: bool = false     # AI has already made its one trade offer this
 var last_threat: Dictionary = {}  # player id -> turn_no of their last threat (AI cooldown)
 var over: bool = false
 var result: Dictionary = {}
-var prompt: Dictionary = {}       # pending human decision: counter | trade | threat
+var prompt: Dictionary = {}       # pending human decision: counter | trade | threat | demand
 var counter_q: Array = []
 var next_card_id: int = 1
 var total: Dictionary = {}
@@ -822,6 +822,73 @@ func _resolve_threat(p: Player, t: Player, comply: bool) -> void:
 	event.emit("disarm_all", {"p": t})
 	_rebuild_war_queue((p.id + 1) % players.size())
 
+## Threatened to hand over a card: the threatened player chooses which card from their hand (`card_id`),
+## or refuses (-1). It changes hands face down - only the two of them know what it was. Refusing changes
+## nothing by itself: the threat is only as good as the threatener's will to strike.
+func answer_demand(card_id: int) -> bool:
+	if prompt.is_empty() or prompt.get("type", "") != "demand":
+		return false
+	var pr := prompt
+	if card_id >= 0 and not pr.player.hand.any(func(c): return c.id == card_id):
+		return false
+	prompt = {}
+	_resolve_demand(pr.from, pr.player, card_id)
+	return true
+
+func _resolve_demand(p: Player, t: Player, card_id: int) -> void:
+	if t.hand.is_empty():
+		log_msg("%s has no cards in hand to hand over - the threat is empty." % t.name, "quiet")
+		return
+	if card_id < 0:
+		log_msg("%s REFUSES to hand over a card." % t.name, "reveal")
+		return
+	for i in range(t.hand.size()):
+		if t.hand[i].id == card_id:
+			var c = t.hand.pop_at(i)
+			c.pub = false
+			p.hand.append(c)
+			_progress()
+			log_msg("%s gives in and hands %s a card." % [t.name, p.name], "reveal")
+			event.emit("demand_paid", {"from": t, "to": p, "c": c})
+			_rebuild_war_queue((p.id + 1) % players.size())      # the new card may make a test or a strike possible
+			return
+
+## AI threatened to hand over a card: the id of the card it gives, or -1 to refuse. Fear makes it give in
+## (more readily than to a demand to disarm: one card costs less), a grudge or a counter-strike of its own
+## makes it stand firm. A frightened power hands over what it judges the threatener wants most, from what
+## it can see of them; a calmer one gives in with its least useful card.
+func ai_answer_demand(t: Player, from: Player) -> int:
+	if t.hand.is_empty():
+		return -1
+	var fear := float(t.persona.fear)
+	var pr := 0.15 + 0.8 * fear - 0.5 * grudge(t, from)
+	if has_all_caps(from):
+		pr += 0.15
+	if can_counter(t):
+		pr -= 0.3
+	if rng.randf() >= clampf(pr, 0.05, 0.9):
+		return -1
+	if rng.randf() < fear + (0.2 if not can_counter(t) else 0.0):
+		var B := belief(t)
+		var best = null
+		var best_v := -1.0
+		for c in t.hand:
+			var v := _wanted_by(B, from, c.key) + (rng.randf() - 0.5) * 0.02
+			if v > best_v:
+				best_v = v
+				best = c
+		return best.id
+	var y = least_useful(t)
+	return y.id if y != null else -1
+
+## How much X seems to want a card of kind `key`, as the viewer of belief B sees it: a Technology X
+## lacks (worthless once X has tested), or a Capability X is not known to hold.
+func _wanted_by(B: Dictionary, X: Player, key: String) -> float:
+	if INFO[key].kind == "tech" and X.tested:
+		return 0.05
+	var base: float = 1.0 if INFO[key].kind == "tech" else {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[key]
+	return base * (1.0 - bp(B, X, key))
+
 ## Shuffle every Capability card (hand and table) back into the deck. Returns their names.
 func _return_caps(t: Player) -> Array:
 	_progress()
@@ -837,7 +904,8 @@ func _return_caps(t: Player) -> Array:
 	return names
 
 ## Mutually Assured Destruction (the original rules): the moment every power still in the game is a
-## Superpower, the game ends and all of them win.
+## Superpower - all eight cards: the four Technologies tested (they never leave the table) and all four
+## Capabilities - the game ends and all of them win.
 func is_mad() -> bool:
 	var al := alive_list()
 	return al.size() >= 2 and al.all(func(x): return is_superpower(x))
@@ -887,9 +955,16 @@ func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 		if v > best_v:
 			best_v = v
 			best = tid
-	if best >= 0 and best_v > 0.9 and rng.randf() < 0.3 + 0.3 * float(p.persona.aggr):
-		return {"kind": "threat", "target": best}
-	return {}
+	if best < 0 or best_v <= 0.9 or rng.randf() >= 0.3 + 0.3 * float(p.persona.aggr):
+		return {}
+	# Leaning on them: shake them down for a card p is missing and they may well hold - or make them disarm.
+	var x := by_id(best)
+	var need := 0.0
+	for k in (CAPS if p.tested else TECH + CAPS):
+		if not holds(p, k):
+			need = maxf(need, bp(B, x, k))
+	var shake := need > 0.2 and not x.hand.is_empty() and rng.randf() < 0.5
+	return {"kind": "demand" if shake else "threat", "target": best}
 
 func _rebuild_war_queue(start_pid: int) -> void:
 	war_queue = []
@@ -930,7 +1005,7 @@ func caps_held(x: Player) -> Array:
 	return res
 
 func _valid_war(p: Player, c: Dictionary) -> bool:
-	if c.kind == "threat":
+	if c.kind == "threat" or c.kind == "demand":
 		return threat_targets(p).has(int(c.get("target", -1)))
 	if c.kind == "test":
 		return can_test(p)
@@ -956,6 +1031,18 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 			prompt = {"type": "threat", "player": tt, "from": p}
 		else:
 			_resolve_threat(p, tt, ai_comply_threat(tt, p))
+		return true
+	if c.kind == "demand":
+		var td := by_id(int(c.target))
+		_breach_of_faith(p)
+		last_threat[p.id] = turn_no
+		_shift_trust(td, p, -0.06)      # nobody likes being shaken down
+		log_msg("%s threatens %s: hand over a card - or else." % [p.name, td.name], "attack")
+		event.emit("threat", {"from": p, "to": td})
+		if td.human and not td.hand.is_empty():
+			prompt = {"type": "demand", "player": td, "from": p}
+		else:
+			_resolve_demand(p, td, ai_answer_demand(td, p) if not td.human else -1)
 		return true
 	var alive_before := alive_list().size()
 	apply_war(p, c)

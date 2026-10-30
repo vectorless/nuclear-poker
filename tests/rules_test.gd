@@ -69,5 +69,30 @@ func _init() -> void:
 	g.kill([g.players[2], g.players[3]], {})
 	g.settle()
 	check(g.over and g.result.kind == "mad" and g.result.survivors.size() == 2, "the moment every power left is a Superpower: MAD, and both survivors win (%s)" % g.result.get("kind", "-"))
+	# Threatened to hand over a card: the threatened player picks the card, or refuses
+	g = game([["uranium", "refinement"], tech + ["short"], ["warhead", "short"], ["testing"]])
+	var volkov: NPGame.Player = g.players[1]
+	g.do_test(volkov)
+	g.phase = "war"
+	g.war_queue = [1]
+	check(g.war_declare(volkov, {"kind": "demand", "target": 0}) and g.prompt.get("type", "") == "demand", "a power you could strike can be threatened to hand over a card")
+	var give: int = g.players[0].hand[1].id
+	g.answer_demand(give)
+	check(volkov.hand.any(func(c): return c.id == give) and g.players[0].hand.size() == 1, "you choose the card, and it changes hands")
+	g.phase = "war"
+	g.war_queue = [1]
+	g.war_declare(volkov, {"kind": "demand", "target": 0})
+	g.answer_demand(-1)
+	check(g.players[0].hand.size() == 1 and g.prompt.is_empty(), "or you refuse, and keep your cards")
+	# a frightened AI hands over the card it thinks the threatener needs; Volkov has tested, so not a Technology
+	var okafor: NPGame.Player = g.players[2]
+	okafor.persona = okafor.persona.duplicate()
+	okafor.persona.fear = 1.0
+	var gave_short := 0
+	for i in range(40):
+		var id := g.ai_answer_demand(okafor, volkov)
+		if id >= 0 and okafor.hand.filter(func(c): return c.id == id)[0].key == "short":
+			gave_short += 1
+	check(gave_short >= 20, "a frightened power hands over the card the threatener wants (Short range %d of 40)" % gave_short)
 	print("RULES TEST ", "ALL OK" if fails == 0 else "%d FAILURES" % fails)
 	quit(1 if fails > 0 else 0)
