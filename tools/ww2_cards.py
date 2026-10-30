@@ -3,12 +3,12 @@
 
     python3 tools/ww2_cards.py            (run from the project folder; needs Pillow + numpy)
     python3 tools/ww2_cards.py --art poster   use the painted pictures in assets/ww2/art/poster/
-                                              (from tools/meshy_card_art.py) instead of the ink icons
+                                              (from tools/meshy_card_art.py); the default is "painted"
     python3 tools/ww2_cards.py --art painted --burnt   also the burnt copies shown for eliminated players
                                               (assets/ww2/burnt/, from the burn marks in assets/ww2/art/burn/)
     python3 tools/ww2_cards.py --only-burnt   only the burnt copies, from the cards as they are
 
-Reads the icon shapes from the print-and-play card art in assets/*.png and redraws every card as a
+Sets the painted picture of each card into a
 1940s field-manual / dossier card: aged paper, olive-drab header, stencil title, typewriter rules text
 and a rubber stamp. Output goes to assets/ww2/. Deterministic (fixed random seed).
 """
@@ -17,7 +17,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "assets")
 OUT = os.path.join(ROOT, "assets", "ww2")
 FONTS = os.path.join(ROOT, "fonts")
 W, H = 660, 860
@@ -83,32 +82,6 @@ def rough(mask, rng, amount=0.55):
     return Image.fromarray((a * 255).astype(np.uint8))
 
 
-def icon_mask(key):
-    im = Image.open(os.path.join(SRC, key + ".png")).convert("RGBA")
-    a = np.asarray(im).astype(int)
-    g = a[..., :3].mean(-1)
-    tech = key in TECH
-    y0, y1 = (60, 290) if tech else (60, 300)
-    m = np.zeros(g.shape, bool)
-    reg = (g[y0:y1, 20:310] > 235) if tech else (g[y0:y1, 20:310] < 200)
-    m[y0:y1, 20:310] = reg & (a[y0:y1, 20:310, 3] > 200)
-    # keep only the picture: stop at the first clear gap of rows below it (the old card text follows)
-    rows = m.any(1)
-    start = int(np.argmax(rows))
-    gap, end = 0, start
-    for y in range(start, m.shape[0]):
-        if rows[y]:
-            gap, end = 0, y
-        else:
-            gap += 1
-            if gap >= 8:
-                break
-    m[end + 1:] = False
-    ys, xs = np.nonzero(m)
-    crop = Image.fromarray((m * 255).astype(np.uint8)).crop((xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
-    return crop
-
-
 def centered(draw, y, text, f, fill):
     w = draw.textlength(text, font=f)
     draw.text(((W - w) / 2, y), text, font=f, fill=fill)
@@ -127,7 +100,7 @@ def stamp(text, rng, color=STAMP_RED, size=44, angle=-14):
     return col, m.point(lambda v: int(v * 0.82))
 
 
-ART = None      # a style folder under assets/ww2/art/, or None for the ink icons
+ART = "painted"      # a style folder under assets/ww2/art/
 ART_BOX = (52, 200, W - 52, 508)      # the picture window: left, top, right, bottom
 
 
@@ -151,8 +124,8 @@ def trim_bars(im):
 def art_window(card, key, rng):
     """Set a painted picture into the card like a printed plate: cropped to the window, a touch of the
     paper's grain through it, a thin ink frame. Returns False when there is no picture for this card."""
-    path = os.path.join(OUT, "art", ART, key + ".png") if ART else None
-    if not path or not os.path.exists(path):
+    path = os.path.join(OUT, "art", ART, key + ".png")
+    if not os.path.exists(path):
         return False
     x0, y0, x1, y1 = ART_BOX
     bw, bh = x1 - x0, y1 - y0
@@ -169,16 +142,6 @@ def art_window(card, key, rng):
     d = ImageDraw.Draw(card)
     d.rectangle([x0, y0, x1 - 1, y1 - 1], outline=INK, width=3)
     return True
-
-
-def _icon(card, ic, rng):
-    box_w, box_h = 380, 290
-    sc = min(box_w / ic.width, box_h / ic.height)
-    ic = ic.resize((max(1, int(ic.width * sc)), max(1, int(ic.height * sc))), Image.LANCZOS)
-    n = noise(ic.width, ic.height, 5, rng)
-    ic = Image.fromarray((np.asarray(ic) * (0.72 + 0.28 * n)).astype(np.uint8))      # worn ink
-    inkc = Image.new("RGB", ic.size, INK)
-    card.paste(inkc, ((W - ic.width) // 2, 215 + (box_h - ic.height) // 2), ic)
 
 
 def make_card(key, idx):
@@ -200,12 +163,8 @@ def make_card(key, idx):
         size -= 2
     d.text((52, 46 + (70 - size) // 2), title, font=STENCIL(size), fill=PAPER)
     d.text((54, 160), kind, font=TYPE(30), fill=INK)
-    if art_window(card, key, rng):
-        ic = None
-    else:
-        ic = icon_mask(key)
-    if ic is not None:
-        _icon(card, ic, rng)
+    if not art_window(card, key, rng):
+        raise SystemExit("no picture for %s in assets/ww2/art/%s - run tools/meshy_card_art.py" % (key, ART))
     # rules text
     y = 525
     if req:

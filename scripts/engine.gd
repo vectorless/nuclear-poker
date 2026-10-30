@@ -1,7 +1,7 @@
 class_name NPGame
 extends RefCounted
 ## Nuclear Poker — rules engine + AI (pure logic, no nodes), ported from the JS prototype.
-## Game design: Vinay Gupta. Print-and-play v4.2: Jonathan Korman. Card designs inspired by Ian Willey.
+## Original game: Vinay Gupta & Dan Carter (GNU FDL).
 ## Kept free of any UI so a lobby server can run it later (e.g. as a headless Godot instance).
 ## Only the Classic game is implemented here; the Slow/Fog/Fast WAR modes and the Biowar expansions
 ## were removed for now - they are in git history at the tag `all-modes`.

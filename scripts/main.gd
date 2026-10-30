@@ -1,6 +1,6 @@
 extends Control
 ## Nuclear Poker — Godot UI. Talks to NPGame (engine.gd). All controls are built in code.
-## Game design: Vinay Gupta. Print-and-play v4.2: Jonathan Korman. Card designs inspired by Ian Willey.
+## Original game: Vinay Gupta & Dan Carter (GNU FDL).
 
 const C_BG := Color("#121309")
 const C_BG2 := Color("#191a10")
@@ -1245,7 +1245,7 @@ func _build_menu() -> Control:
 	cols.add_child(right)
 
 	var b1 := _box(left, "Classic rules")
-	b1.add_child(_lbl("The original rules sheet. Each turn you draw a card OR offer a trade - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.", 14, C_MUT, null, true))
+	b1.add_child(_lbl("Adapted from the original rules. Each turn you draw a card OR offer a trade - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.", 14, C_MUT, null, true))
 
 	var b3 := _box(right, "The table")
 	b3.add_child(_lbl("PLAYERS AT THE TABLE", 12, C_MUT, MONO))
@@ -1325,7 +1325,7 @@ func _build_menu() -> Control:
 	btn["fs_menu"] = fsm
 	left.add_child(row)
 	btn["begin"] = begin
-	var cred := _rtl("Game design by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url]) · card designs inspired by [b]Ian Willey[/b] · print-and-play v4.2 by [b]Jonathan Korman[/b] ([url=https://miniver.itch.io/nuclear-poker]miniver.itch.io[/url]). Original game by [b]Vinay Gupta[/b] ([url=mailto:VinayGupta@butteredsidedown.co.uk]VinayGupta@butteredsidedown.co.uk[/url]) & [b]Dan Carter[/b] ([url=https://files.howtolivewiki.com/nuclear_poker_card_game_proliferation.pdf]original rules, PDF[/url]), GNU FDL licensed; includes images from Wikimedia. Unofficial digital adaptation. \"The only winning move is not to play.\"", 12, C_MUT)
+	var cred := _rtl("Original game by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url], [url=mailto:VinayGupta@butteredsidedown.co.uk]VinayGupta@butteredsidedown.co.uk[/url]) & [b]Dan Carter[/b] ([url=https://files.howtolivewiki.com/nuclear_poker_card_game_proliferation.pdf]original rules, PDF[/url]), GNU FDL licensed. Unofficial digital adaptation. \"The only winning move is not to play.\"", 12, C_MUT)
 	cred.meta_clicked.connect(func(m): OS.shell_open(str(m)))
 	right.add_child(cred)
 	_refresh_opts()
@@ -2881,7 +2881,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Trading - and you can be cheated")
 	_rules_p(vb, "- The player you offer a card to [b]sees it[/b] before deciding; nobody else does. The card they answer with stays [b]face down[/b] until it arrives in your hand - and the rest of the table never sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- A refusal never costs your turn: offer again, to the same player or another, or draw instead.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
 	_rules_h(vb, "Nuclear exchanges")
-	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b] (the sheet's house rule). After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack, threaten - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
+	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b]. After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack, threaten - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent weapons go to the set-aside pile. A [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see.\n- An eliminated player's hand is turned face up and stays on show in their seat.")
 	_rules_h(vb, "Threats and disarming")
