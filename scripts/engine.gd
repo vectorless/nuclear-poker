@@ -324,6 +324,7 @@ func research(p: Player) -> bool:
 	_progress()
 	log_msg("%s researches (draws a card)." % p.name)
 	event.emit("draw", {"p": p, "c": c})
+	_reveal_super(p)
 	return true
 
 func _take_hand_card(p: Player, card_id: int):
@@ -359,6 +360,7 @@ func do_test(p: Player) -> bool:
 	_progress()
 	log_msg("%s performs a NUCLEAR TEST — all four Technologies on the table." % p.name, "test")
 	event.emit("test", {"p": p})
+	_reveal_super(p)
 	return true
 
 # ---------------------------------------------------------------- attacks
@@ -368,6 +370,21 @@ var attacked_on: Dictionary = {}      # player id -> turn_no of their last attac
 
 func is_superpower(p: Player) -> bool:
 	return p.tested and has_all_caps(p)
+
+## A Superpower hides nothing: the moment a power has tested and holds all four Capabilities, they
+## go on the table beside its Technologies, for all to see. Returns true the first time this happens.
+func _reveal_super(p: Player) -> bool:
+	if not p.alive or not is_superpower(p):
+		return false
+	if _show_cards(p, CAPS).is_empty():
+		return false
+	log_msg("%s is a NUCLEAR SUPERPOWER - all four Capabilities on the table." % p.name, "test")
+	event.emit("superpower", {"p": p})
+	return true
+
+func _reveal_supers() -> void:
+	for p in players:
+		_reveal_super(p)
 
 func fired_this_turn(p: Player) -> bool:
 	return int(attacked_on.get(p.id, -1)) == turn_no
@@ -379,12 +396,13 @@ func attack_types(p: Player, ignore_limit := false) -> Array:
 		return outl
 	if not ignore_limit and fired_this_turn(p) and not is_superpower(p):
 		return outl
+	if has_all_caps(p):      # a Superpower's strike reaches anyone and spends nothing: its only weapon worth the name
+		outl.append({"type": "super", "targets": others(p).map(func(x): return x.id)})
+		return outl
 	if holds(p, "short"):
 		outl.append({"type": "short", "targets": neighbors_of(p).map(func(x): return x.id)})
 	if holds(p, "short") and holds(p, "long"):
 		outl.append({"type": "long", "targets": others(p).map(func(x): return x.id)})
-	if has_all_caps(p):
-		outl.append({"type": "super", "targets": others(p).map(func(x): return x.id)})
 	return outl
 
 func reveal_keys(type: String) -> Array:
@@ -515,7 +533,10 @@ func choose_counter(target_id: int) -> bool:
 	return true
 
 func check_over() -> void:
-	if over or not prompt.is_empty() or counter_q.size() > 0:
+	if over:
+		return
+	_reveal_supers()      # a card may have arrived in a hand by any route; a new Superpower shows its arsenal
+	if not prompt.is_empty() or counter_q.size() > 0:
 		return
 	var al := alive_list()
 	if al.size() <= 1:
@@ -523,10 +544,33 @@ func check_over() -> void:
 	elif is_mad():
 		log_msg("Every power left is a Superpower: MUTUALLY ASSURED DESTRUCTION. Each can destroy all the others - so none will. All win.", "reveal")
 		end_game("mad")
+	else:
+		var h := hegemon()
+		if h != null:
+			log_msg("%s is the only Superpower, and no other power holds a single Capability: nobody can stand against it. HEGEMONY - %s wins." % [h.name, h.name], "reveal")
+			end_game("hegemony", {"winner": h.id})
 
-func end_game(kind: String) -> void:
+## Hegemony: one Superpower left at the table, and every other power still in the game holds no
+## Capability card at all - they have laid down their arms, or never took them up. Nobody can challenge
+## the Superpower and nobody need die: the game ends and the Superpower wins.
+func hegemon() -> Player:
+	var al := alive_list()
+	if al.size() < 2:
+		return null
+	var sp: Player = null
+	for x in al:
+		if is_superpower(x):
+			if sp != null:
+				return null
+			sp = x
+		elif not caps_held(x).is_empty():
+			return null
+	return sp
+
+func end_game(kind: String, extra: Dictionary = {}) -> void:
 	over = true
 	result = {"kind": kind, "survivors": alive_list().map(func(p): return p.id)}
+	result.merge(extra)
 	event.emit("over", result)
 
 # ---------------------------------------------------------------- turn flow
@@ -687,6 +731,7 @@ func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
 	_shift_trust(t, p, 0.05)      # they handed their card over first
 	log_msg("%s hands a card to %s. %s has pledged a card in return - to be delivered on %s's next turn." % [p.name, t.name, t.name, t.name])
 	event.emit("give", {"from": p, "to": t, "c": x})
+	_reveal_super(t)
 
 ## Human answer to an offer: the card (from their hand) to offer back, or -1 to decline.
 func answer_trade(counter_id: int) -> bool:
@@ -733,6 +778,7 @@ func honour(p: Player) -> bool:
 		log_msg("%s DELIVERS the pledged card to %s - the trade is complete." % [p.name, to.name])
 		event.emit("give", {"from": p, "to": to, "c": y})
 		_deal_outcome(p, to, true)
+		_reveal_super(to)
 	_next_honour()
 	return true
 
@@ -846,9 +892,6 @@ func ai_play_classic(p: Player) -> bool:
 	var B := belief(p)
 	if deep(p):
 		return _play_deep(p, B)
-	var th := _ai_threat(p, B)
-	if not th.is_empty() and play_threat(p, th):
-		return true
 	var want := false
 	if p.hand.size() >= 1:
 		if deck.is_empty():
@@ -883,10 +926,6 @@ func ai_play_classic(p: Player) -> bool:
 ## back, the goodwill the card buys, and - looking through the others' eyes - whether the card would
 ## arm someone against it, against the table, or (for a schemer) against its rival.
 func _play_deep(p: Player, B: Dictionary) -> bool:
-	if pv(p, "peace") < 0.5:      # only the ruthless lean on people
-		var th := _ai_threat(p, B)
-		if not th.is_empty() and play_threat(p, th):
-			return true
 	var best = null
 	var best_s := 0.15
 	for t in others(p):
@@ -952,21 +991,21 @@ func answer_threat(comply: bool) -> bool:
 		return false
 	var pr := prompt
 	prompt = {}
-	_resolve_threat(pr.from, pr.player, comply)
-	_after_play()
+	_after_threat(pr.from, _resolve_threat(pr.from, pr.player, comply))
 	return true
 
-func _resolve_threat(p: Player, t: Player, comply: bool) -> void:
+func _resolve_threat(p: Player, t: Player, comply: bool) -> bool:
 	var held := caps_held(t)
 	if held.is_empty():
 		log_msg("%s has no Capability cards to give up - the threat is empty." % t.name, "quiet")
-		return
+		return false
 	if not comply:
 		log_msg("%s REFUSES to disarm." % t.name, "reveal")
-		return
+		return false
 	var names := _return_caps(t)
 	log_msg("%s gives in and returns %s to the deck." % [t.name, ", ".join(names)], "reveal")
 	event.emit("disarm_all", {"p": t})
+	return true
 
 ## A forced trade: the threatener has put up a card (`offer`); the threatened player sees it and chooses
 ## a card of their own to give back (`card_id`), or refuses (-1). The cards swap at once, face down - only
@@ -979,14 +1018,13 @@ func answer_demand(card_id: int) -> bool:
 	if card_id >= 0 and not pr.player.hand.any(func(c): return c.id == card_id):
 		return false
 	prompt = {}
-	_resolve_demand(pr.from, pr.player, int(pr.offer), card_id)
-	_after_play()
+	_after_threat(pr.from, _resolve_demand(pr.from, pr.player, int(pr.offer), card_id))
 	return true
 
-func _resolve_demand(p: Player, t: Player, offer_id: int, card_id: int) -> void:
+func _resolve_demand(p: Player, t: Player, offer_id: int, card_id: int) -> bool:
 	if card_id < 0:
 		log_msg("%s REFUSES the forced trade." % t.name, "reveal")
-		return
+		return false
 	var x := _take_from_hand(p, offer_id)
 	var y := _take_from_hand(t, card_id)
 	t.hand.append(x)
@@ -994,6 +1032,9 @@ func _resolve_demand(p: Player, t: Player, offer_id: int, card_id: int) -> void:
 	_progress()
 	log_msg("%s gives in and trades a card with %s." % [t.name, p.name], "reveal")
 	event.emit("demand_paid", {"from": t, "to": p, "c": y, "offer": x})
+	_reveal_super(p)
+	_reveal_super(t)
+	return true
 
 func _take_from_hand(p: Player, card_id: int) -> Dictionary:
 	for i in range(p.hand.size()):
@@ -1097,7 +1138,7 @@ func ai_comply_threat(t: Player, from: Player) -> bool:
 			pr -= 0.3      # a peacemaker's deterrent is the one thing it will not give up
 	return rng.randf() < clampf(pr, 0.05, 0.9)
 
-## An AI power may spend its move leaning on a player it could strike.
+## An AI power that will not simply attack may lean on a player it could strike.
 func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 	if int(last_threat.get(p.id, -99)) > turn_no - 4:
 		return {}
@@ -1133,7 +1174,7 @@ func _rebuild_war_queue(start_pid: int) -> void:
 			war_queue.append(pl.id)
 
 func war_options(p: Player) -> bool:
-	return p.alive and (can_test(p) or not attack_types(p).is_empty())
+	return p.alive and (can_test(p) or not attack_types(p).is_empty() or can_threaten(p))
 
 ## Next player in the exchange window with something to declare, or -1 when the window is over.
 func war_actor() -> int:
@@ -1169,11 +1210,13 @@ func _valid_threat(p: Player, c: Dictionary) -> bool:
 			and not by_id(int(c.target)).hand.is_empty()
 	return c.kind == "threat" and threat_targets(p).has(int(c.get("target", -1)))
 
-## Threatening is a player's move for the turn, like drawing or offering a trade: answered or refused,
-## the exchange window follows - with the threatener first, free to carry the threat out.
-func play_threat(p: Player, c: Dictionary) -> bool:
-	if phase != "play" or not p.alive or cur() != p or not prompt.is_empty() or not _valid_threat(p, c):
-		return false
+## A threat is a declaration in the exchange window, like a test or an attack: one per player per
+## turn. Refused, the threatener declares once more at once - free to carry the threat out. Given in
+## to, the round of declarations starts again, as after a test.
+func can_threaten(p: Player) -> bool:
+	return p.alive and int(last_threat.get(p.id, -1)) != turn_no and not threat_targets(p).is_empty()
+
+func _declare_threat(p: Player, c: Dictionary) -> void:
 	_breach_of_faith(p)
 	last_threat[p.id] = turn_no
 	var t := by_id(int(c.target))
@@ -1182,18 +1225,26 @@ func play_threat(p: Player, c: Dictionary) -> bool:
 		event.emit("threat", {"from": p, "to": t})
 		if t.human:
 			prompt = {"type": "threat", "player": t, "from": p}
-			return true
-		_resolve_threat(p, t, ai_comply_threat(t, p))
+			return
+		_after_threat(p, _resolve_threat(p, t, ai_comply_threat(t, p)))
 	else:
 		_shift_trust(t, p, -0.06)      # nobody likes being strong-armed
 		log_msg("%s threatens %s: trade a card with me - or else." % [p.name, t.name], "attack")
 		event.emit("threat", {"from": p, "to": t})
 		if t.human:
 			prompt = {"type": "demand", "player": t, "from": p, "offer": int(c.offer)}
-			return true
-		_resolve_demand(p, t, int(c.offer), ai_answer_demand(t, p, int(c.offer)))
-	_after_play()
-	return true
+			return
+		_after_threat(p, _resolve_demand(p, t, int(c.offer), ai_answer_demand(t, p, int(c.offer))))
+
+## What follows a threat: refused, the threatener gets one more declaration now; given in to, the
+## round of declarations starts over (the threatener cannot threaten again this turn).
+func _after_threat(p: Player, gave_in: bool) -> void:
+	if phase != "war":
+		return
+	if gave_in:
+		_rebuild_war_queue((p.id + 1) % players.size())
+	else:
+		war_queue.push_front(p.id)
 
 func _valid_war(p: Player, c: Dictionary) -> bool:
 	if c.kind == "test":
@@ -1208,6 +1259,10 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 	if phase != "war" or war_queue.is_empty() or war_queue[0] != p.id or not prompt.is_empty():
 		return false
 	war_queue.pop_front()
+	if c.kind == "threat" or c.kind == "demand":
+		if can_threaten(p) and _valid_threat(p, c):
+			_declare_threat(p, c)
+		return true
 	if c.kind == "pass" or not _valid_war(p, c):
 		return true
 	var alive_before := alive_list().size()
@@ -1511,6 +1566,10 @@ func ai_war_choice(p: Player) -> Dictionary:
 				best = {"kind": "attack", "type": o.type, "target": tid}
 	if best != null and best_score > 0.35:
 		return best
+	if can_threaten(p) and not (deep(p) and pv(p, "peace") >= 0.5):      # peace-lovers do not lean on people
+		var th := _ai_threat(p, B)
+		if not th.is_empty():
+			return th
 	return pass_c
 
 func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:
@@ -1747,5 +1806,6 @@ func legal(p: Player) -> Dictionary:
 		"can_test": can_test(p),
 		"attacks": attack_types(p),
 		"can_counter": can_counter(p),
+		"can_threaten": can_threaten(p),
 		"trade_targets": others(p).map(func(x): return x.id) if not p.hand.is_empty() else [],
 	}

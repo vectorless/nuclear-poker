@@ -19,7 +19,7 @@ func _init() -> void:
 
 func _batch(np: int, sets: Array) -> int:
 	var fails := 0
-	var st := {"games": 0, "turns": 0, "last": 0, "annih": 0, "cease": 0, "stale": 0, "mad": 0, "t500": 0, "maxT": 0, "deaths": 0}
+	var st := {"games": 0, "turns": 0, "last": 0, "annih": 0, "cease": 0, "stale": 0, "mad": 0, "hegem": 0, "t500": 0, "maxT": 0, "deaths": 0}
 	var kinds := {"short": 0, "long": 0, "super": 0, "counter": 0, "test": 0}
 	var by_persona := {}      # id -> {games, survived, kills, all_alive, honoured, reneged, attacks}
 	var trades := {"offers": 0, "honoured": 0, "reneged": 0, "threats": 0, "demands": 0, "paid": 0, "gave_in": 0, "refused": 0, "disarmed": 0, "grudge_hits": 0, "condemned": 0, "breaches": 0}
@@ -137,13 +137,14 @@ func _batch(np: int, sets: Array) -> int:
 			"annihilation": st.annih += 1
 			"stalemate": st.stale += 1
 			"mad": st.mad += 1
+			"hegemony": st.hegem += 1
 			_: st.cease += 1
 		if g.turn_no > 500:
 			st.t500 += 1
 	for pid in by_persona:
 		var b: Dictionary = by_persona[pid]
 		print("  %-10s games=%3d survived=%3d%% kills=%.2f tables-all-alive=%3d%% deals-kept=%3d broken=%3d tests=%3d strikes=%3d" % [pid, b.games, 100 * b.survived / maxi(1, b.games), float(b.kills) / maxi(1, b.games), 100 * b.all_alive / maxi(1, b.games), b.honoured, b.reneged, b.tests, b.attacks])
-	print("stalemates=%d mutually-assured-destruction=%d hit-500-turn-limit=%d forced-trades=%d given-in=%d" % [st.stale, st.mad, st.t500, trades.demands, trades.paid])
+	print("stalemates=%d mutually-assured-destruction=%d hegemony=%d hit-500-turn-limit=%d forced-trades=%d given-in=%d" % [st.stale, st.mad, st.hegem, st.t500, trades.demands, trades.paid])
 	print("classic n=%d games=%d avgTurns=%.1f max=%d last=%d annih=%d standdown=%d avgDeaths=%.2f tests=%d short=%d long=%d super=%d counter=%d trades=%d honoured=%d reneged=%d threats=%d gave_in=%d refused=%d grudge_attacks=%d disarmed=%d condemned=%d breaches=%d" % [
 		np, st.games, float(st.turns) / maxf(1.0, st.games), st.maxT, st.last, st.annih, st.cease,
 		float(st.deaths) / maxf(1.0, st.games), kinds.test, kinds.short, kinds.long, kinds.super, kinds.counter,
