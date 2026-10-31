@@ -17,6 +17,9 @@ In the browser: https://vectorless.github.io/nuclear-poker/
 Open the folder in Godot 4.6+ and press Play (main scene: `scripts/main.tscn`).
 
 ## Debug
+Seven AI characters: the Hawk, the Deterrer, the Opportunist, the Wildcard, and three who think three levels deep -
+the Pacifist, the Peacemaker and the Schemer (what they believe, what they think the others think of them, and how a
+move will be read before they make it; `scripts/engine.gd`, "what the others think"). `tests/persona_test.gd` checks them.
 Press **F9** in a game to see what each AI holds and thinks: hand, persona, how threatened it feels by
 each player, its estimates of their arsenals, trust/alliances, stand-down leaning, and the draw pile.
 

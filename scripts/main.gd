@@ -15,7 +15,7 @@ const C_GREEN := Color("#a3b866")
 
 const ORDER := ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super"]
 const AI_DELAY := 1.0              # seconds between AI steps (divided by `speed`)
-const PERSONA_IDS := ["random", "hawk", "dove", "opp", "wild"]
+const PERSONA_IDS := ["random", "hawk", "dove", "opp", "wild", "pacifist", "peacemaker", "schemer"]
 const CARD_DESC := {
 	"uranium": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
 	"refinement": "Technology. Hold all four different Technologies to perform a Nuclear Test.",
@@ -994,6 +994,8 @@ func _ready() -> void:
 		_shots.call_deferred()
 	elif "--madshots" in OS.get_cmdline_user_args():
 		_madshots.call_deferred()
+	elif "--personashots" in OS.get_cmdline_user_args():
+		_personashots.call_deferred()
 	elif "--dragtest" in OS.get_cmdline_user_args():
 		_dragtest.call_deferred()
 
@@ -1290,7 +1292,7 @@ func _build_menu() -> Control:
 		ob.add_item("Random")
 		ob.add_theme_constant_override("icon_max_width", 28)
 		ob.get_popup().add_theme_constant_override("icon_max_width", 32)
-		for pid in ["hawk", "dove", "opp", "wild"]:
+		for pid in PERSONA_IDS.slice(1):
 			var pe: Dictionary = NPGame.PERSONAS[pid]
 			var hp := "res://assets/portraits/%s_head.png" % pid
 			if ResourceLoader.exists(hp):
@@ -1467,7 +1469,7 @@ func _rule(c: Color, h: float, gap := 0) -> Control:
 
 # ====================================================================== start / events
 func _start_game() -> void:
-	var ids := ["hawk", "dove", "opp", "wild"]
+	var ids := PERSONA_IDS.slice(1)
 	var n_ai := clampi(int(cfg.players) - 1, 2, 4)
 	var picks: Array = []
 	for i in range(n_ai):
@@ -1573,6 +1575,8 @@ func _pump() -> void:
 			_threat_modal()
 		elif str(G.prompt.get("type", "")) == "demand":
 			_demand_modal()
+		elif str(G.prompt.get("type", "")) == "ceasefire":
+			_ceasefire_modal()
 		else:
 			_counter_modal()
 		return
@@ -2846,6 +2850,36 @@ func _disarm_modal() -> void:
 	vb.add_child(row)
 	modal_btns.append({"kind": "disarm_yes", "button": y})
 
+## An AI power proposes a stand-down and the others agree: the last word is yours.
+func _ceasefire_modal() -> void:
+	var pr := G.prompt
+	if pr.is_empty() or not pr.player.human or modal != null:
+		return
+	var vb := _open_modal("Stand-down proposed", false, true, false)
+	var names: Array = G.others(ME).filter(func(x): return x != pr.from).map(func(x): return x.name)
+	var txt := "[b]%s[/b] proposes that everyone stops here." % pr.from.name
+	if not names.is_empty():
+		txt += " %s agree%s." % [" and ".join(names), "s" if names.size() == 1 else ""]
+	txt += "\n\nAgree, and the game ends with everyone still at the table alive. Refuse, and it goes on - they can ask again after a full round, or once something changes."
+	vb.add_child(_rtl(txt, 15, Color("#ddd3b4")))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var y := _btn("Agree - stand down", "primary")
+	y.pressed.connect(func():
+		_close_modal(true)
+		G.answer_ceasefire(true)
+		_after_human())
+	var n := _btn("Refuse", "danger")
+	n.pressed.connect(func():
+		_close_modal(true)
+		G.answer_ceasefire(false)
+		_after_human())
+	row.add_child(y)
+	row.add_child(n)
+	vb.add_child(row)
+	modal_btns.append({"kind": "cease_yes", "button": y})
+	modal_btns.append({"kind": "cease_no", "button": n})
+
 func _counter_modal() -> void:
 	var pr := G.prompt
 	if pr.is_empty() or not pr.player.human or modal != null:
@@ -2919,6 +2953,8 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_p(vb, "The moment [b]every power still in the game is a Superpower[/b] - holding [b]all eight cards[/b]: the four Technologies tested on the table and all four Capabilities - the game ends in Mutually Assured Destruction: each can destroy all the others, so none will - and [b]all survivors win[/b].")
 	_rules_h(vb, "The table map")
 	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round the unclaimed highlands at the heart of the continent. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the highlands to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
+	_rules_h(vb, "The powers")
+	_rules_p(vb, "Each AI power has a character, and plays to it.\n- [b]General Volkov, the Hawk[/b]: builds fast, strikes when he can, bows to nobody.\n- [b]Dr. Okafor, the Deterrer[/b]: cautious and frightened; arms to be left alone, trades honestly.\n- [b]Ambassador Lin, the Opportunist[/b]: takes what the table offers.\n- [b]President Reyes, the Wildcard[/b]: unpredictable, and quick to break a deal.\n- [b]Minister Haddad, the Pacifist[/b]: never builds the bomb. She keeps every deal, hoards Technologies so nobody else can use them, gives in to threats rather than fight, and proposes a stand-down whenever she can see the table agreeing. Her safety is the trust she has earned.\n- [b]Ambassador Raman, the Peacemaker[/b]: wants a table where no strike is rational. She tests only when it will not provoke, prizes Counter-strike (the deterrent) over Long range, arms the weak rather than the aggressive, and works towards a stand-down - or Mutually Assured Destruction, where all win.\n- [b]Chancellor Hartono, the Schemer[/b]: cultivates trust in order to spend it. He keeps faith with those he still needs, breaks the deal that completes his arsenal, arms his rival's enemies, and strikes the player the table would least mind losing.\nThe last three think three levels deep: what they believe, what they think the others think of them, and how each move will be read before they make it. Press [b]F9[/b] to watch them think.")
 	_rules_h(vb, "Tips")
 	_rules_p(vb, "- Hover over any card to see it larger.\n- On a tablet or phone: [b]tap[/b] a card in your hand for its options, [b]hold[/b] it to see it large, and [b]drag[/b] it to trade. Tap a small card to enlarge it (tap anywhere to put it away); hold a button or a portrait to read its hint. Play in landscape - [b]Fullscreen[/b] gives the most room.\n- Press [b]F9[/b] for a debug view of what the other powers hold and think.")
 
@@ -3186,7 +3222,7 @@ func _build_debug() -> void:
 	hd.add_child(_spacer())
 	hd.add_child(_lbl("F9 or Esc to close  ·  updates live  ·  hidden information!", 12, C_MUT, MONO))
 	vb.add_child(hd)
-	vb.add_child(_lbl("Threat = how likely the AI thinks that player can eliminate it soon (from what it has seen). Trust starts at 60%: above it is goodwill (ally), below it a grudge. Stand-down = its current leaning if that player proposed (yes above 0.50). Trade = rough willingness to answer that player's offer.", 12, C_MUT, null, true))
+	vb.add_child(_lbl("Threat = how likely the AI thinks that player can eliminate it soon (from what it has seen). Trust starts at 60%: above it is goodwill (ally), below it a grudge. Stand-down = its current leaning if that player proposed (yes above 0.50). Trade = rough willingness to answer that player's offer. Thinking characters also show: Sees me = how far it reckons that player trusts it (from the public record); Intent = how inclined it foresees that player is to strike it (fires above 0.35); Agrees = whether it expects that player to accept its stand-down.", 12, C_MUT, null, true))
 	for p in G.players:
 		if p.human:
 			continue
@@ -3204,6 +3240,10 @@ func _build_debug() -> void:
 		var state := "can TEST now" if dv.can_test else ("armed: " + ", ".join(dv.attacks) if not dv.attacks.is_empty() else "cannot strike")
 		top.add_child(_lbl(state, 12, C_AMBER if (dv.can_test or not dv.attacks.is_empty()) else C_MUT, MONO))
 		col.add_child(top)
+		if G.deep(p):
+			var mind := "thinks: peril to me %s · a test now would provoke %s · wants a stand-down %s · chief rival %s · alliance %s · peace %s" % [
+				_pct(dv.peril), ("+" + _pct(dv.provocation)) if dv.can_test else "-", _pct(dv.wants_peace), dv.rival, _pct(G.pv(p, "ally")), _pct(G.pv(p, "peace"))]
+			col.add_child(_lbl(mind, 12, C_AMBER, MONO, true))
 		var hand := HBoxContainer.new()
 		hand.add_theme_constant_override("separation", 4)
 		hand.add_child(_lbl("HAND ", 11, C_MUT, MONO))
@@ -3213,10 +3253,11 @@ func _build_debug() -> void:
 			hand.add_child(_lbl("(empty)", 12, C_MUT, MONO))
 		col.add_child(hand)
 		var grid := GridContainer.new()
-		grid.columns = 8
+		var deep := G.deep(p)
+		grid.columns = 11 if deep else 8
 		grid.add_theme_constant_override("h_separation", 18)
 		grid.add_theme_constant_override("v_separation", 2)
-		for h in ["LOOKING AT", "THREAT", "TESTED?", "CAPS (est)", "TRUST", "", "STAND-DOWN", "TRADE"]:
+		for h in ["LOOKING AT", "THREAT", "TESTED?", "CAPS (est)", "TRUST", "", "STAND-DOWN", "TRADE"] + (["SEES ME", "INTENT", "AGREES"] if deep else []):
 			grid.add_child(_lbl(h, 11, C_MUT, MONO))
 		for r in dv.rows:
 			var nm: String = ("YOU" if r.human else r.name) + ("" if r.alive else " (dead)")
@@ -3229,6 +3270,10 @@ func _build_debug() -> void:
 			grid.add_child(_lbl(rel, 13, C_GREEN if rel == "ally" else Color("#e0644e"), MONO))
 			grid.add_child(_lbl(("%.2f %s" % [r.standdown, "yes" if r.standdown > 0.5 else "no"]) if r.alive else "-", 13, C_INK, MONO))
 			grid.add_child(_lbl(_pct(r.trade) if r.alive else "-", 13, C_INK, MONO))
+			if deep:
+				grid.add_child(_lbl(_pct(r.sees_me), 13, C_INK, MONO))
+				grid.add_child(_lbl(("%.2f" % r.intent) if r.intent > -5.0 else "-", 13, Color("#e0644e") if r.intent > 0.35 else C_INK, MONO))
+				grid.add_child(_lbl(("yes" if r.agrees > 0.5 else "no") if (r.alive and not r.human) else "-", 13, C_INK, MONO))
 		col.add_child(grid)
 		vb.add_child(pc)
 	var dk := HFlowContainer.new()
@@ -3288,7 +3333,7 @@ func _autotest() -> void:
 			if "--trace" in OS.get_cmdline_user_args() and G != null:
 				print("T ", iter, " t", G.turn_no, " ", G.phase, " cur=", G.cur().name, " popup=", popup != null, " modal=", modal != null, " paused=", paused, " q=", G.war_queue, " prompt=", G.prompt.get("type", "-"), " btns=", btn.keys())
 			if iter % 500 == 0 and G != null:
-				print("  ..iter ", iter, " turn ", G.turn_no, " phase ", G.phase, " cur ", G.cur().name, " alive ", G.alive_list().size(), " deck ", G.deck.size(), " modal ", modal != null, " prompt ", G.prompt.get("type", "-"), " debts ", G.debts.size(), " paused ", paused, " meAlive ", ME.alive, " queue ", G.war_queue, " tried ", G.trade_tried, " counterq ", G.counter_q.size(), " over ", G.over)
+				print("  ..iter ", iter, " turn ", G.turn_no, " phase ", G.phase, " cur ", G.cur().name, " alive ", G.alive_list().size(), " deck ", G.deck.size(), " modal ", modal != null, " prompt ", G.prompt.get("type", "-"), " debts ", G.debts.size(), " paused ", paused, " meAlive ", ME.alive, " queue ", G.war_queue, " counterq ", G.counter_q.size(), " over ", G.over)
 			await get_tree().create_timer(0.02).timeout
 			if G == null or G.over and modal != null and not modal_btns.is_empty() and modal_btns[0].kind == "again":
 				break
@@ -3296,6 +3341,14 @@ func _autotest() -> void:
 			for mb in modal_btns:
 				if not is_instance_valid(mb.button) or mb.button.disabled:
 					continue
+				if mb.kind == "cease_yes" or mb.kind == "cease_no":
+					var cw := "cease_yes" if randf() < 0.3 else "cease_no"
+					for mbc in modal_btns:
+						if mbc.kind == cw:
+							mbc.button.pressed.emit()
+							break
+					handled = true
+					break
 				if mb.kind == "counter":
 					mb.button.pressed.emit()
 					acts.counter += 1
@@ -3794,6 +3847,8 @@ func _readme_shot() -> void:
 					G.answer_threat(false)
 				elif str(pr.get("type", "")) == "demand":
 					G.answer_demand(-1)
+				elif str(pr.get("type", "")) == "ceasefire":
+					G.answer_ceasefire(false)
 				else:
 					G.choose_counter(pr.options[0])
 			elif st == "human":
@@ -3824,6 +3879,40 @@ func _readme_shot() -> void:
 
 var scroll_to_me := func():
 	board_scroll.scroll_vertical = 0
+
+## The new characters: the menu list, a table with them, the F9 view and a stand-down proposal.
+func _personashots() -> void:
+	var d := "/tmp/gshots2"
+	DirAccess.make_dir_recursive_absolute(d)
+	await get_tree().process_frame
+	opp_btns[0].show_popup()
+	await get_tree().create_timer(0.4).timeout
+	await _shot(d + "/13-menu-characters.png")
+	opp_btns[0].get_popup().hide()
+	cfg.players = "5"
+	cfg.p1 = "pacifist"
+	cfg.p2 = "peacemaker"
+	cfg.p3 = "schemer"
+	cfg.p4 = "hawk"
+	_start_game()
+	speed = 1.0
+	pump_token += 1
+	await get_tree().create_timer(0.6).timeout
+	await _shot(d + "/13-table.png")
+	var ev := InputEventKey.new()
+	ev.keycode = KEY_F9
+	ev.pressed = true
+	Input.parse_input_event(ev)
+	await get_tree().create_timer(0.6).timeout
+	await _shot(d + "/13-debug.png")
+	Input.parse_input_event(ev)
+	await get_tree().create_timer(0.3).timeout
+	G.prompt = {"type": "ceasefire", "player": ME, "from": G.players[1]}
+	_ceasefire_modal()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/13-ceasefire.png")
+	print("PERSONA SHOTS DONE")
+	get_tree().quit(0)
 
 ## The Mutually Assured Destruction front page, once with each of its photographs.
 func _madshots() -> void:

@@ -30,7 +30,14 @@ jobs:
       - name: Import project
         run: godot --headless --import || true
 
-      - name: Rules simulation (Classic, 3 and 4 players, 600 AI-vs-AI games, must pass)
+      - name: Rules, trade and character tests
+        run: |
+          godot --headless -s tests/rules_test.gd
+          godot --headless -s tests/trade_test.gd
+          godot --headless -s tests/persona_test.gd
+          godot --headless -s tests/human_sim.gd
+
+      - name: Rules simulation (Classic, 3 to 5 players, 600 AI-vs-AI games, must pass)
         run: godot --headless -s tests/sim.gd
 
       - name: Export Web build

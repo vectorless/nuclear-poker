@@ -33,6 +33,12 @@ PEOPLE = {
            "plain brass buttons, silver hair combed back, a faint knowing smile, hands folded.",
     "wild": "A charismatic Latin American president in his forties, 1940s white dress military uniform with gold "
             "braid and an unmarked sash, slicked hair, thin moustache, a reckless confident grin.",
+    "pacifist": "A composed Levantine foreign minister in her fifties, 1940s tailored dark wool suit over a high-necked "
+                "blouse with a small plain brooch, dark hair pinned in a low chignon, calm steady eyes, a faint sadness.",
+    "peacemaker": "A poised South Asian ambassador in her forties, 1940s silk sari worn with a tailored jacket, hair in "
+                  "a neat bun, a measured, listening expression, hands clasped.",
+    "schemer": "A courtly Javanese chancellor in his sixties, 1940s formal double-breasted suit with a batik-patterned "
+               "cravat and a blangkon cloth headdress, silver moustache, a patient, amused, calculating half-smile.",
 }
 
 
@@ -66,7 +72,10 @@ def req(key, method, url, body=None):
 
 # head crop per portrait, as fractions of the image: left, top, right, bottom
 HEAD_BOX = {"hawk": (0.28, 0.10, 0.76, 0.58), "dove": (0.29, 0.13, 0.77, 0.61),
-            "opp": (0.26, 0.12, 0.74, 0.60), "wild": (0.28, 0.12, 0.76, 0.60)}
+            "opp": (0.26, 0.12, 0.74, 0.60), "wild": (0.28, 0.12, 0.76, 0.60),
+            # these two came out as a small print pasted on a dossier page: crop to the print's face
+            "peacemaker": (0.33, 0.12, 0.63, 0.42), "schemer": (0.35, 0.11, 0.65, 0.41),
+            "pacifist": (0.22, 0.08, 0.72, 0.58)}
 
 
 DEAD_PROMPT = ("Turn this person into a skeleton: keep exactly the same uniform, hat, clothing, pose, framing, "
@@ -104,7 +113,7 @@ def make_head(name, suffix=""):
 def main():
     args = sys.argv[1:]
     if "--heads" in args:
-        for name in PEOPLE:
+        for name in [a for a in args if a != "--heads"] or PEOPLE:
             make_head(name)
             make_head(name, "_dead")
         print("heads done")

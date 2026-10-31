@@ -27,7 +27,29 @@ const PERSONAS := {
 	"dove": {"id": "dove", "name": "Dr. Okafor", "title": "The Deterrer", "trade": 0.70, "honest": 0.85, "aggr": 0.22, "fear": 0.95, "caution": 0.85, "noise": 0.08, "color": "#4aa3df"},
 	"opp": {"id": "opp", "name": "Ambassador Lin", "title": "The Opportunist", "trade": 0.55, "honest": 0.65, "aggr": 0.50, "fear": 0.75, "caution": 0.50, "noise": 0.10, "color": "#e0a526"},
 	"wild": {"id": "wild", "name": "President Reyes", "title": "The Wildcard", "trade": 0.60, "honest": 0.40, "aggr": 0.55, "fear": 0.40, "caution": 0.10, "noise": 0.35, "color": "#9b6bd1"},
+	# The three strategists think three levels deep (mind 3): what they believe, what they think the
+	# others think of them, and how the others will read each move before they make it.
+	"pacifist": {"id": "pacifist", "name": "Minister Haddad", "title": "The Pacifist", "trade": 0.75, "honest": 0.98, "aggr": 0.0, "fear": 0.60, "caution": 0.90, "noise": 0.05,
+		"ally": 0.9, "peace": 1.0, "mind": 3, "want": {"counter": 0.9, "long": 0.6, "super": 0.6}, "color": "#7fc8a9"},
+	"peacemaker": {"id": "peacemaker", "name": "Ambassador Raman", "title": "The Peacemaker", "trade": 0.80, "honest": 0.92, "aggr": 0.08, "fear": 0.50, "caution": 0.80, "noise": 0.06,
+		"ally": 1.0, "peace": 0.85, "mind": 3, "want": {"counter": 1.3, "long": 0.5}, "color": "#e8c46a"},
+	"schemer": {"id": "schemer", "name": "Chancellor Hartono", "title": "The Schemer", "trade": 0.65, "honest": 0.60, "aggr": 0.55, "fear": 0.35, "caution": 0.45, "noise": 0.08,
+		"ally": 0.7, "peace": 0.1, "mind": 3, "color": "#c97b4a"},
 }
+## What a character is like when it has no dossier (the human player, as the AIs see them).
+const NEUTRAL := {"trade": 0.5, "honest": 0.6, "aggr": 0.5, "fear": 0.5, "caution": 0.5, "noise": 0.0, "ally": 0.5, "peace": 0.4, "mind": 1}
+
+## A player's character, with defaults for the dials the older dossiers do not set:
+##   ally   how much it seeks alliances and spends on them
+##   peace  how much it values a table where nobody dies (its "least worst" outcome)
+##   mind   how many levels deep it thinks (1 reacts, 2 minds its reputation, 3 foresees reactions)
+func pe_of(p: Player) -> Dictionary:
+	if p.human or p.persona.is_empty():
+		return NEUTRAL
+	return p.persona
+
+func pv(p: Player, key: String) -> float:
+	return float(pe_of(p).get(key, NEUTRAL.get(key, 0.5)))
 
 class Player:
 	var id: int = 0
@@ -143,10 +165,37 @@ func log_msg(text: String, tone: String = "info") -> void:
 func trust_of(viewer: Player, target: Player) -> float:
 	return float(trust.get("%d:%d" % [viewer.id, target.id], TRUST_START))
 
-func _shift_trust(viewer: Player, target: Player, delta: float) -> void:
+## Every shift in trust is also booked where others can reason about it: `rep` holds the public
+## part (deals kept or broken, disarmament, condemnation, threats - the whole table saw them) and
+## `fav` the private part (the quality of a card that changed hands, known only to the two partners).
+## Nobody reads anyone's real `trust`; a thinking AI reads these to work out how it is seen.
+var rep: Dictionary = {}
+var fav: Dictionary = {}
+
+func _shift_trust(viewer: Player, target: Player, delta: float, secret := false) -> void:
 	if viewer == target:
 		return
-	trust["%d:%d" % [viewer.id, target.id]] = clampf(trust_of(viewer, target) + delta, 0.0, 1.0)
+	var k := "%d:%d" % [viewer.id, target.id]
+	trust[k] = clampf(trust_of(viewer, target) + delta, 0.0, 1.0)
+	var ledger: Dictionary = fav if secret else rep
+	ledger[k] = float(ledger.get(k, 0.0)) + delta
+
+## How much `x` trusts `y`, as `viewer` can work it out: the public record, plus the favours
+## between x and y when the viewer is one of them. Never the hidden truth.
+func est_trust(viewer: Player, x: Player, y: Player) -> float:
+	if x == y:
+		return 1.0
+	var k := "%d:%d" % [x.id, y.id]
+	var t := TRUST_START + float(rep.get(k, 0.0))
+	if viewer == x or viewer == y:
+		t += float(fav.get(k, 0.0))
+	return clampf(t, 0.0, 1.0)
+
+func est_warmth(viewer: Player, x: Player, y: Player) -> float:
+	return maxf(0.0, est_trust(viewer, x, y) - TRUST_START)
+
+func est_grudge(viewer: Player, x: Player, y: Player) -> float:
+	return maxf(0.0, TRUST_START - est_trust(viewer, x, y))
 
 ## A deal was kept (true) or broken (false) by `by`, at the expense of `victim`. Everyone sees it.
 func _deal_outcome(by: Player, victim: Player, kept: bool) -> void:
@@ -168,7 +217,7 @@ func warmth(viewer: Player, target: Player) -> float:
 ## A card it really wanted (a missing Technology or Capability) builds goodwill; a duplicate or
 ## a card it has no use for is neutral. Only the two partners know what changed hands (face down).
 func _favour(receiver: Player, giver: Player, c: Dictionary) -> void:
-	_shift_trust(receiver, giver, 0.16 * maxf(0.0, _gain(receiver, c) - 0.4))
+	_shift_trust(receiver, giver, 0.16 * maxf(0.0, _gain(receiver, c) - 0.4), true)
 
 ## ---- disarmament (every reaction is shaped by the observer's character)
 func is_disarmed(x: Player) -> bool:
@@ -179,7 +228,7 @@ func is_disarmed(x: Player) -> bool:
 func _on_disarm(p: Player) -> void:
 	disarmed[p.id] = turn_no
 	for v in others(p):
-		var pe: Dictionary = v.persona if not v.human else {"caution": 0.5, "aggr": 0.5, "fear": 0.5}
+		var pe := pe_of(v)
 		_shift_trust(v, p, 0.04 + 0.14 * float(pe.caution) + 0.04 * float(pe.fear) - 0.05 * float(pe.aggr))
 
 ## Someone who disarmed turns to force again: treated almost like a broken deal by everyone.
@@ -189,7 +238,7 @@ func _breach_of_faith(p: Player) -> void:
 	disarmed.erase(p.id)
 	log_msg("%s takes up arms again after disarming - a breach of faith." % p.name, "reveal")
 	for v in others(p):
-		var pe: Dictionary = v.persona if not v.human else {"caution": 0.5, "aggr": 0.5}
+		var pe := pe_of(v)
 		_shift_trust(v, p, -(0.2 + 0.15 * float(pe.caution)))
 
 ## Attacking a power that disarmed: the table condemns it, the cautious most of all.
@@ -198,7 +247,7 @@ func _condemn(attacker: Player, victim: Player) -> void:
 	for v in others(attacker):
 		if v == victim:
 			continue
-		var pe: Dictionary = v.persona if not v.human else {"caution": 0.5, "aggr": 0.5}
+		var pe := pe_of(v)
 		_shift_trust(v, attacker, -(0.18 + 0.2 * float(pe.caution) - 0.08 * float(pe.aggr)))
 
 ## Would AI p lay down its weapons now? Peaceful, cautious characters do when they feel safe and
@@ -727,7 +776,7 @@ func _gain(p: Player, c: Dictionary) -> float:
 	if k == "tech":
 		return 0.05 if p.tested else (0.25 if dup else 1.0)
 	if k == "cap":
-		return 0.25 if dup else {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key]
+		return 0.25 if dup else {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key] * want(p, c.key)
 	return 0.25 if dup else 0.85
 
 ## AI answering an offer: the id of the card it offers back, or -1 to decline. It has looked at the
@@ -737,9 +786,20 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 		return -1
 	var B := belief(t)
 	var thr := threat_on(B, from, t)
-	var pr := float(t.persona.trade) + 0.25 * thr + 0.9 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
+	var pr := pv(t, "trade") + 0.25 * thr + 0.9 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
 	if rng.randf() >= clampf(pr, 0.03, 0.95):
 		return -1
+	if deep(t):
+		# answer with the card that serves the partnership best, not just the one t can most spare
+		var best = null
+		var best_s := -99.0
+		for c in t.hand:
+			var s := deal_score(t, from, c, B)
+			if s > best_s:
+				best_s = s
+				best = c
+		if best != null:
+			return best.id
 	var y = least_useful(t)
 	return y.id if y != null else -1
 
@@ -760,6 +820,19 @@ func ai_honour(p: Player) -> void:
 	var y = _trade_card(p, int(ds[0].pledge))
 	if y != null and usefulness(p, y) > 0.85:
 		honest *= 0.6
+	if deep(p):
+		if pv(p, "peace") >= 0.95:
+			honest = 1.0      # the pacifist's word is her only defence: she never breaks it
+		elif pv(p, "peace") >= 0.5:
+			honest = maxf(honest, 0.95)      # peace-lovers keep their word
+		else:
+			# a schemer keeps faith with those it still needs and burns the bridge it no longer does
+			var danger := threat_on(belief(p), creditor, p) * clampf((foresee_attack(p, creditor, p) - 0.1) / 0.8, 0.0, 1.0)
+			var armed_after: bool = p.tested and (holds(p, "short") or (y != null and y.key == "short"))      # with the pledge back in hand
+			if creditor == rival(p) and armed_after:
+				honest *= 0.3
+			elif danger > 0.3 or est_trust(p, creditor, p) > 0.75:
+				honest = maxf(honest, 0.9)
 	if rng.randf() < honest:
 		honour(p)
 	else:
@@ -767,7 +840,12 @@ func ai_honour(p: Player) -> void:
 
 func ai_play_classic(p: Player) -> bool:
 	ai_maybe_disarm(p)
+	ai_maybe_propose(p)
+	if over or not prompt.is_empty():
+		return true
 	var B := belief(p)
+	if deep(p):
+		return _play_deep(p, B)
 	var th := _ai_threat(p, B)
 	if not th.is_empty() and play_threat(p, th):
 		return true
@@ -800,6 +878,73 @@ func ai_play_classic(p: Player) -> bool:
 	if not deck.is_empty():
 		return play_research(p)
 	return play_skip(p)
+
+## A thinking player's turn. It weighs every card it could offer to every partner: what it expects
+## back, the goodwill the card buys, and - looking through the others' eyes - whether the card would
+## arm someone against it, against the table, or (for a schemer) against its rival.
+func _play_deep(p: Player, B: Dictionary) -> bool:
+	if pv(p, "peace") < 0.5:      # only the ruthless lean on people
+		var th := _ai_threat(p, B)
+		if not th.is_empty() and play_threat(p, th):
+			return true
+	var best = null
+	var best_s := 0.15
+	for t in others(p):
+		if trust_of(p, t) < 0.25:
+			continue      # will not deal with a known cheat
+		for c in p.hand:
+			var s := deal_score(p, t, c, B)
+			if s > best_s:
+				best_s = s
+				best = {"t": t, "c": c}
+	if best != null and trade_offer(p, best.c.id, best.t.id) != "invalid":
+		return true
+	if not deck.is_empty():
+		return play_research(p)
+	return play_skip(p)
+
+func deal_score(p: Player, t: Player, c: Dictionary, B: Dictionary) -> float:
+	var peace := pv(p, "peace")
+	var ally := pv(p, "ally")
+	var use := usefulness(p, c)
+	var s := _expected_gain(p) * _pledge_faith(p, t) - use      # what comes back, less what goes
+	var need := _wanted_by(B, t, c.key)      # how much t seems to need this card
+	# goodwill, worth more from someone who already trusts me - but nobody gives away what it needs itself
+	s += ally * 0.6 * need * (0.5 + est_trust(p, t, p)) * (1.0 - 0.8 * use)
+	var arm := foresee_arming(p, t, c)
+	s -= (1.2 * peace + 0.3) * arm.others
+	s -= (1.5 + 0.5 * peace) * arm.self
+	s += (1.0 - peace) * 0.9 * arm.rival      # a schemer arms its rival's enemies
+	if INFO[c.key].kind == "tech" and not t.tested:
+		s -= peace * 0.8 * (1.0 - readiness(B, t))      # proliferation: another step towards the bomb
+	if INFO[c.key].kind == "cap" and t.tested and need > 0.5:
+		var calm := 0.0
+		for y in others(t):
+			calm = maxf(calm, foresee_attack(p, t, y))
+		if calm < 0.2:
+			s += ally * 0.5      # deterrence for all: arm a power that threatens nobody
+	return s + _noise(p) * 0.3
+
+## Would p ask the table to stand down now? Thinking players (mind 2+) do when they want it and can
+## foresee - from each other's dossiers and the public record - that everyone would agree.
+func ai_maybe_propose(p: Player) -> bool:
+	if p.human or over or pv(p, "mind") < 2.0 or not prompt.is_empty() or not can_propose_ceasefire(p):
+		return false
+	var peace := pv(p, "peace")
+	var risk := peril(p, p)
+	# nothing to stand down from until the table has gone nuclear - or a strike is plainly coming
+	if risk < 0.2 and not players.any(func(x): return x.tested):
+		return false
+	var wants := 0.1 + 0.6 * peace - 0.4 * pv(p, "aggr") + 0.5 * risk * pv(p, "fear")
+	if not attack_types(p, true).is_empty() and risk < 0.1:
+		wants -= 0.4 * (1.0 - peace)      # winning: why stop?
+	if rng.randf() >= clampf(wants, 0.0, 0.9):
+		return false
+	for x in others(p):
+		if not x.human and ceasefire_score(x, p, p) < 0.5:
+			return false      # they would refuse, as far as p can tell
+	propose_ceasefire(p)
+	return true
 
 ## The threatened player decides (human prompt). Refusing changes nothing by itself.
 func answer_threat(comply: bool) -> bool:
@@ -865,8 +1010,8 @@ func _take_from_hand(p: Player, card_id: int) -> Dictionary:
 func ai_answer_demand(t: Player, from: Player, offer_id: int) -> int:
 	if t.hand.is_empty():
 		return -1
-	var fear := float(t.persona.fear)
-	var pr := 0.15 + 0.8 * fear - 0.5 * grudge(t, from)
+	var fear := pv(t, "fear")
+	var pr := 0.15 + 0.8 * fear - 0.5 * grudge(t, from) + (0.3 * pv(t, "peace") if deep(t) else 0.0)
 	for c in from.hand:
 		if c.id == offer_id:
 			pr += 0.3 * (_gain(t, c) - 0.5)
@@ -941,11 +1086,15 @@ func ai_comply_threat(t: Player, from: Player) -> bool:
 	var held := caps_held(t)
 	if held.is_empty():
 		return false
-	var pr := float(t.persona.fear) * 0.7 - 0.06 * held.size() - 0.5 * grudge(t, from)      # won't bow to a cheat
+	var pr := pv(t, "fear") * 0.7 - 0.06 * held.size() - 0.5 * grudge(t, from)      # won't bow to a cheat
 	if has_all_caps(from):
 		pr += 0.15
 	if can_counter(t):
 		pr -= 0.35
+	if deep(t):
+		pr += 0.5 * pv(t, "peace")      # weapons are not worth a war to a peace-lover
+		if can_counter(t) and pv(t, "peace") >= 0.5 and pv(t, "aggr") > 0.0:
+			pr -= 0.3      # a peacemaker's deterrent is the one thing it will not give up
 	return rng.randf() < clampf(pr, 0.05, 0.9)
 
 ## An AI power may spend its move leaning on a player it could strike.
@@ -1158,14 +1307,20 @@ func revenge_prob(B: Dictionary, X: Player) -> float:
 func _noise(p: Player) -> float:
 	return (rng.randf() - 0.5) * 2.0 * float(p.persona.noise)
 
-func score_nuke(B: Dictionary, p: Player, x: Player) -> float:
-	var pe := p.persona
+## How inclined `p` is to strike `x`. With `by` set, this is `by`'s estimate of p's inclination,
+## made from p's dossier and the public record alone (no hidden trust, no noise).
+func score_nuke(B: Dictionary, p: Player, x: Player, by: Player = null) -> float:
+	var pe := pe_of(p)
 	var t := threat_on(B, x, p)
 	var rev := revenge_prob(B, x)
 	var al := alive_list()
+	var gr := grudge(p, x) if by == null else est_grudge(by, p, x)
+	var wa := warmth(p, x) if by == null else est_warmth(by, p, x)
+	if deep(p) and pv(p, "peace") < 0.5:
+		wa *= 0.25      # a schemer's goodwill is a tool, not a bond: old partners are not spared
 	var s: float = float(pe.fear) * t + float(pe.aggr) * 0.6 - float(pe.caution) * 1.5 * rev + (0.35 if al.size() == 2 else 0.0)
-	s += (0.5 + 0.5 * float(pe.aggr)) * grudge(p, x)      # betrayal breeds hostility
-	s -= (1.0 - 0.4 * float(pe.aggr)) * 1.2 * warmth(p, x)      # allies are spared
+	s += (0.5 + 0.5 * float(pe.aggr)) * gr      # betrayal breeds hostility
+	s -= (1.0 - 0.4 * float(pe.aggr)) * 1.2 * wa      # allies are spared
 	if is_disarmed(x):
 		s += 0.3 * float(pe.aggr) - 0.6 * float(pe.caution)      # an easy target - or an unthinkable one
 	if al.size() >= 3:
@@ -1175,7 +1330,144 @@ func score_nuke(B: Dictionary, p: Player, x: Player) -> float:
 			var ty := threat_on(B, y, p)
 			if ty > t:
 				s -= 0.25 * (ty - t)
-	return s + _noise(p)
+	if deep(p):
+		# A death at the table is a loss in itself to a character that values peace - unless the
+		# target plainly means to strike first. A schemer weighs how the rest of the table would take it.
+		var peace := pv(p, "peace")
+		s -= peace * (1.4 - 0.9 * t)
+		if peace < 0.5:
+			s += 0.35 * (1.0 - peace) * (1.0 - rev)      # a schemer sees a power without second strike as prey
+		var intent := foresee_attack(p, x, p) if by == null else -9.0
+		s += 0.8 * clampf(intent - 0.35, 0.0, 1.0) * (0.5 + pv(p, "fear"))
+		for y in others(p):
+			if y != x:
+				s -= 0.3 * (1.0 - peace) * est_warmth(p, y, x) - 0.3 * (1.0 - peace) * est_grudge(p, y, x)
+		if peace < 0.5 and by == null and x == rival(p):
+			s += 0.4 * (1.0 - peace)      # the schemer's chosen enemy
+	return s + (_noise(p) if by == null else 0.0)
+
+func deep(p: Player) -> bool:
+	return pv(p, "mind") >= 3.0
+
+# ---------------------------------------------------------------- what the others think (levels 2 and 3)
+## The table as an outside observer sees it: every face-down card unknown, including one's own.
+## What one player reasons another can see, without peeking at anyone's hand.
+func belief_public() -> Dictionary:
+	var cnt: Dictionary = total.duplicate()
+	for c in out:
+		cnt[c.key] -= 1
+	for pl in players:
+		for c in pl.table:
+			cnt[c.key] -= 1
+		for c in pl.hand:
+			if c.pub:
+				cnt[c.key] -= 1
+	var n := 0
+	for k in cnt.keys():
+		cnt[k] = maxi(0, int(cnt[k]))
+		n += cnt[k]
+	return {"viewer": null, "cnt": cnt, "N": n}
+
+## Level 3: how inclined `x` is to strike `target`, as `viewer` can foresee it - from x's dossier and
+## the public table. -9 when x cannot plausibly reach target at all. Above ~0.35, x would fire.
+func foresee_attack(viewer: Player, x: Player, target: Player) -> float:
+	if not x.alive or not target.alive or x == target:
+		return -9.0
+	var B := belief_public()
+	if threat_on(B, x, target) < 0.02:
+		return -9.0
+	return score_nuke(B, x, target, viewer)
+
+## How likely it looks, to `viewer`, that someone both can and means to strike `target` soon: 0..1.
+func peril(viewer: Player, target: Player) -> float:
+	var B := belief_public()
+	var worst := 0.0
+	for x in others(target):
+		var can := threat_on(B, x, target)
+		if can < 0.02:
+			continue
+		var wants := clampf((score_nuke(B, x, target, viewer) - 0.1) / 0.8, 0.0, 1.0)
+		worst = maxf(worst, can * wants)
+	return worst
+
+## What a public act would do to the peril `p` is in: `kind` "test" (lay the Technologies on the
+## table) or "disarm" (give up every Capability). Tried on the table and undone; nothing else runs.
+func provocation(p: Player, kind: String) -> float:
+	var before := peril(p, p)
+	var after := before
+	if kind == "test":
+		if p.tested:
+			return 0.0
+		var moved: Array = []
+		for k in TECH:
+			for i in range(p.hand.size()):
+				if p.hand[i].key == k:
+					moved.append(p.hand.pop_at(i))
+					break
+		for c in moved:
+			p.table.append(c)
+		p.tested = true
+		after = peril(p, p)
+		p.tested = false
+		for c in moved:
+			p.table.erase(c)
+			p.hand.append(c)
+	elif kind == "disarm":
+		var held := caps_held(p)
+		var where: Array = []
+		for c in held:
+			where.append(p.table if p.table.has(c) else p.hand)
+			(p.table if p.table.has(c) else p.hand).erase(c)
+		after = peril(p, p)
+		for i in range(held.size()):
+			where[i].append(held[i])
+	return after - before
+
+## Handing card `c` to `t`: how much more likely a strike becomes on `p` itself, on anyone else at
+## the table, and on p's chief rival - as p can foresee it, with the card counted in t's hand.
+func foresee_arming(p: Player, t: Player, c: Dictionary) -> Dictionary:
+	var res := {"self": 0.0, "others": 0.0, "rival": 0.0}
+	if INFO[c.key].kind != "cap":
+		return res
+	var rv := rival(p)
+	var pub_before: bool = c.pub
+	var before := {}
+	for y in alive_list():
+		if y != t:
+			before[y.id] = peril(p, y)
+	c.pub = true      # as good as public: p knows t holds it now
+	t.table.append(c)
+	for y in alive_list():
+		if y == t:
+			continue
+		var rise := maxf(0.0, peril(p, y) - float(before[y.id]))
+		if y == p:
+			res.self += rise
+		else:
+			res.others += rise
+			if y == rv:
+				res.rival += rise
+	t.table.erase(c)
+	c.pub = pub_before
+	return res
+
+## The player p has most to fear from: the one most able and inclined to strike it, with a grudge counted.
+func rival(p: Player) -> Player:
+	var B := belief_public()
+	var best: Player = null
+	var best_s := -1.0
+	for x in others(p):
+		var s := threat_on(B, x, p) * clampf((score_nuke(B, x, p, p) - 0.1) / 0.8, 0.0, 1.0) + 0.5 * grudge(p, x)
+		if s > best_s:
+			best_s = s
+			best = x
+	return best
+
+## A character's own weighting of a card (the Peacemaker prizes Counter-strike, the deterrent, over
+## Long range, the offensive weapon).
+func want(p: Player, key: String) -> float:
+	var w: Dictionary = pe_of(p).get("want", {})
+	return float(w.get(key, 1.0))
 
 func ai_war_choice(p: Player) -> Dictionary:
 	var pe := p.persona
@@ -1191,6 +1483,21 @@ func ai_war_choice(p: Player) -> Dictionary:
 			if holds(p, k):
 				cap_count += 1
 		var prob := clampf(0.30 + 0.40 * float(pe.aggr) + 0.35 * (1.0 if any_tested else 0.0) + 0.06 * cap_count, 0.0, 0.95)
+		if deep(p):
+			var prov := provocation(p, "test")
+			if pv(p, "aggr") <= 0.0:
+				prob = 0.0      # a pacifist never builds the bomb
+			elif pv(p, "peace") >= 0.5:
+				# test when it will not provoke a strike - or when one is coming anyway and the test deters
+				var risk := peril(p, p)
+				prob = 0.0 if (prov > 0.15 and risk < 0.4) else (0.5 + 0.4 * risk)
+				if not any_tested and cap_count == 0:
+					prob *= 0.3      # a peacemaker does not go nuclear first without a reason
+			else:
+				# a schemer means to strike first: provocation only gives it pause, a weapon in hand hastens it
+				prob *= 0.6 if prov > 0.3 else 1.0
+				if holds(p, "short"):
+					prob = maxf(prob, 0.7)
 		if rng.randf() < prob:
 			return {"kind": "test"}
 	var best = null
@@ -1234,7 +1541,7 @@ func usefulness(p: Player, c: Dictionary) -> float:
 	if k == "cap":
 		if dup:
 			return 0.25
-	return {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key]
+	return {"short": 0.9, "long": 0.8, "counter": 0.75, "super": 0.85}[c.key] * want(p, c.key)
 
 func least_useful(p: Player):
 	var best = null
@@ -1270,9 +1577,9 @@ func _public_sig() -> String:
 		parts.append("%d%d%d" % [int(x.alive), int(x.tested), x.table.size()])
 	return ",".join(parts) + "|%d" % out.size()
 
-func ceasefire_score(p: Player, proposer: Player) -> float:
-	var pe := p.persona
-	var B := belief(p)
+func ceasefire_score(p: Player, proposer: Player, by: Player = null) -> float:
+	var pe := pe_of(p)
+	var B := belief(p) if by == null else belief_public()
 	var s := 0.55 + 0.45 * float(pe.caution) - 0.45 * float(pe.aggr)
 	var can_strike := not attack_types(p, true).is_empty()
 	var max_t := 0.0
@@ -1294,13 +1601,22 @@ func ceasefire_score(p: Player, proposer: Player) -> float:
 		s += 0.1 + 0.35 * float(pe.caution) - 0.2 * float(pe.aggr)      # they laid down their arms first
 	elif can_strike:
 		s -= 0.2 * float(pe.aggr)                      # they are defenceless and we are not
-	s -= 1.2 * grudge(p, proposer)
-	s += 0.6 * warmth(p, proposer)                     # an ally's word counts
+	s -= 1.2 * (grudge(p, proposer) if by == null else est_grudge(by, p, proposer))
+	s += 0.6 * (warmth(p, proposer) if by == null else est_warmth(by, p, proposer))      # an ally's word counts
 	s += minf(0.2, turn_no / 500.0) * (0.5 if can_strike else 1.0)      # war weariness
+	if deep(p):
+		var peace := pv(p, "peace")
+		s += 0.45 * peace
+		if can_strike and max_t < 0.1:
+			s -= 0.4 * (1.0 - peace)                   # winning, and no peace-lover: why stop?
 	return s
 
 func _ai_agrees_ceasefire(p: Player, proposer: Player) -> bool:
 	return ceasefire_score(p, proposer) + _noise(p) * 0.25 > 0.5
+
+## An AI's own stance on a stand-down (its score as proposer): used by the debug view.
+func wants_peace(p: Player) -> float:
+	return 0.1 + 0.6 * pv(p, "peace") - 0.4 * pv(p, "aggr") + 0.5 * peril(p, p) * pv(p, "fear")
 
 ## Is `p` allowed to propose a stand-down right now? (Not straight after a refusal.)
 func can_propose_ceasefire(p: Player) -> bool:
@@ -1314,13 +1630,21 @@ func propose_ceasefire(proposer: Player) -> Dictionary:
 		return {"agrees": [], "refuses": [], "blocked": true}
 	var agrees: Array = []
 	var refuses: Array = []
+	var humans: Array = []
 	for p in others(proposer):
 		if p.human:
-			agrees.append(p)
+			humans.append(p)
 		elif _ai_agrees_ceasefire(p, proposer):
 			agrees.append(p)
 		else:
 			refuses.append(p)
+	if refuses.is_empty() and not humans.is_empty() and not proposer.human:
+		# the AI powers would all agree: the human has the last word
+		log_msg("%s proposes to stop. The other powers agree - it is up to %s." % [proposer.name, humans[0].name])
+		prompt = {"type": "ceasefire", "player": humans[0], "from": proposer}
+		event.emit("ceasefire_ask", {"from": proposer, "to": humans[0]})
+		return {"agrees": agrees, "refuses": [], "blocked": false, "asked": true}
+	agrees.append_array(humans)
 	if refuses.is_empty():
 		ceasefire_block.erase(proposer.id)
 		log_msg("%s proposes to stop. Everyone agrees." % proposer.name)
@@ -1330,6 +1654,22 @@ func propose_ceasefire(proposer: Player) -> Dictionary:
 		var names: Array = refuses.map(func(p): return p.name)
 		log_msg("%s proposes to stop. %s refuse%s." % [proposer.name, " and ".join(names), "s" if refuses.size() == 1 else ""])
 	return {"agrees": agrees, "refuses": refuses, "blocked": false}
+
+## The human answers an AI's stand-down proposal.
+func answer_ceasefire(agree: bool) -> bool:
+	if prompt.is_empty() or prompt.get("type", "") != "ceasefire":
+		return false
+	var pr := prompt
+	prompt = {}
+	var proposer: Player = pr.from
+	if agree:
+		ceasefire_block.erase(proposer.id)
+		log_msg("%s agrees. Everyone stands down." % pr.player.name)
+		end_game("ceasefire")
+	else:
+		ceasefire_block[proposer.id] = {"until": turn_no + alive_list().size(), "sig": _public_sig()}
+		log_msg("%s refuses to stand down." % pr.player.name)
+	return true
 
 # ---------------------------------------------------------------- debug (F9 in the game)
 ## What AI player `p` knows and thinks: its hand, its traits, and how it sees everyone else.
@@ -1350,13 +1690,18 @@ func debug_view(p: Player) -> Dictionary:
 			"caps": caps_est,                        # expected number of Capabilities x holds
 			"trust": trust_of(p, x), "warmth": warmth(p, x), "grudge": grudge(p, x),
 			"standdown": ceasefire_score(p, x) if x.alive and p.alive else 0.0,
+			"sees_me": est_trust(p, x, p),           # level 2: how far p thinks x trusts it
+			"intent": foresee_attack(p, x, p),       # level 3: how inclined p foresees x is to strike it
+			"agrees": ceasefire_score(x, p, p) if x.alive and p.alive and not x.human else 0.0,      # would x accept p's stand-down, as p can tell
 			"trade": clampf(float(p.persona.trade) + 0.25 * threat_on(B, x, p) - 0.8 * grudge(p, x) + 0.6 * warmth(p, x), 0.0, 1.0),
 		})
 	var attacks: Array = []
 	for av in attack_types(p):
 		attacks.append(av.type)
 	return {"name": p.name, "persona": p.persona, "hand": p.hand.map(func(c): return c.key),
-		"can_test": can_test(p), "attacks": attacks, "rows": rows}
+		"can_test": can_test(p), "attacks": attacks, "rows": rows,
+		"peril": peril(p, p), "provocation": provocation(p, "test") if can_test(p) else 0.0,
+		"wants_peace": wants_peace(p), "rival": rival(p).name if rival(p) != null else "-"}
 
 # ---------------------------------------------------------------- driver
 ## What does the game need next? "over" | "prompt" | "human" | "ai"
