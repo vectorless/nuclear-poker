@@ -38,7 +38,8 @@ PEOPLE = {
     "peacemaker": "A poised South Asian ambassador in her forties, 1940s silk sari worn with a tailored jacket, hair in "
                   "a neat bun, a measured, listening expression, hands clasped.",
     "schemer": "A courtly Javanese chancellor in his sixties, 1940s formal double-breasted suit with a batik-patterned "
-               "cravat and a blangkon cloth headdress, silver moustache, a patient, amused, calculating half-smile.",
+               "cravat and a blangkon cloth headdress, silver moustache, a patient, amused, calculating half-smile. "
+               "The whole face and both shoulders in frame, the portrait filling the entire picture edge to edge.",
 }
 
 
@@ -73,8 +74,8 @@ def req(key, method, url, body=None):
 # head crop per portrait, as fractions of the image: left, top, right, bottom
 HEAD_BOX = {"hawk": (0.28, 0.10, 0.76, 0.58), "dove": (0.29, 0.13, 0.77, 0.61),
             "opp": (0.26, 0.12, 0.74, 0.60), "wild": (0.28, 0.12, 0.76, 0.60),
-            # these two came out as a small print pasted on a dossier page: crop to the print's face
-            "peacemaker": (0.33, 0.12, 0.63, 0.42), "schemer": (0.35, 0.11, 0.65, 0.41),
+            # this one came out as a small print pasted on a dossier page: crop to the print's face
+            "peacemaker": (0.33, 0.12, 0.63, 0.42),
             "pacifist": (0.22, 0.08, 0.72, 0.58)}
 
 

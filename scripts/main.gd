@@ -2357,12 +2357,12 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		rb2.pressed.connect(_act_research)
 		bar.add_child(rb2)
 		btn["research"] = rb2
-		var thb := _big(_btn("Threaten...", "danger", 18), 76.0)
-		thb.disabled = G.threat_targets(ME).is_empty()
-		thb.tooltip_text = "Your move for the turn, instead of drawing or offering a trade."
-		thb.pressed.connect(_threaten_modal)
-		bar.add_child(thb)
-		btn["threaten"] = thb
+		if not G.threat_targets(ME).is_empty():      # only once you have tested and can reach someone
+			var thb := _big(_btn("Threaten...", "danger", 18), 76.0)
+			thb.tooltip_text = "Your move for the turn, instead of drawing or offering a trade."
+			thb.pressed.connect(_threaten_modal)
+			bar.add_child(thb)
+			btn["threaten"] = thb
 		if not L.can_research:
 			bar.add_child(_lbl("The deck is empty - offer a trade, threaten, or skip.", 13, C_MUT))
 		if not L.can_research:
@@ -2946,7 +2946,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent weapons go to the set-aside pile. A [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see.\n- An eliminated player's hand is turned face up and stays on show in their seat.")
 	_rules_h(vb, "Threats and disarming")
-	_rules_p(vb, "- [b]Threaten...[/b] (your move for the turn, instead of drawing or trading): name a player you could attack, and make one of two demands. [b]Force a trade[/b]: you put up a card of yours, they see it and give you a card of their choice in return, and the two swap at once, face down - a frightened power may give you the one it thinks you need most. [b]Disarm[/b]: they return [b]all their Capability cards[/b] to the deck. Either way they may refuse instead, and nothing changes hands. A refusal changes nothing by itself, but you are first to declare in the exchange window that follows, so a threat is only as good as your willingness to follow it up - and forcing a trade costs you their trust.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The other powers may disarm too once they have tested, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
+	_rules_p(vb, "- [b]Threaten...[/b] (your move for the turn, instead of drawing or trading): name a player you could attack and make one of two demands. [b]Force a trade[/b]: you put up a card of yours; they see it and give you a card of their choice in return, and the two swap at once, face down. [b]Disarm[/b]: they return [b]all their Capability cards[/b] to the deck. Either way they may refuse, and nothing changes hands. You declare first in the exchange window that follows.\n- [b]Disarm[/b] (top bar): once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn, return all your Capability cards to the deck. The other powers may disarm too once they have tested.")
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "Mutually Assured Destruction")
@@ -2954,9 +2954,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "The table map")
 	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round the unclaimed highlands at the heart of the continent. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the highlands to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
 	_rules_h(vb, "The powers")
-	_rules_p(vb, "Each AI power has a character, and plays to it.\n- [b]General Volkov, the Hawk[/b]: builds fast, strikes when he can, bows to nobody.\n- [b]Dr. Okafor, the Deterrer[/b]: cautious and frightened; arms to be left alone, trades honestly.\n- [b]Ambassador Lin, the Opportunist[/b]: takes what the table offers.\n- [b]President Reyes, the Wildcard[/b]: unpredictable, and quick to break a deal.\n- [b]Minister Haddad, the Pacifist[/b]: never builds the bomb. She keeps every deal, hoards Technologies so nobody else can use them, gives in to threats rather than fight, and proposes a stand-down whenever she can see the table agreeing. Her safety is the trust she has earned.\n- [b]Ambassador Raman, the Peacemaker[/b]: wants a table where no strike is rational. She tests only when it will not provoke, prizes Counter-strike (the deterrent) over Long range, arms the weak rather than the aggressive, and works towards a stand-down - or Mutually Assured Destruction, where all win.\n- [b]Chancellor Hartono, the Schemer[/b]: cultivates trust in order to spend it. He keeps faith with those he still needs, breaks the deal that completes his arsenal, arms his rival's enemies, and strikes the player the table would least mind losing.\nThe last three think three levels deep: what they believe, what they think the others think of them, and how each move will be read before they make it. Press [b]F9[/b] to watch them think.")
-	_rules_h(vb, "Tips")
-	_rules_p(vb, "- Hover over any card to see it larger.\n- On a tablet or phone: [b]tap[/b] a card in your hand for its options, [b]hold[/b] it to see it large, and [b]drag[/b] it to trade. Tap a small card to enlarge it (tap anywhere to put it away); hold a button or a portrait to read its hint. Play in landscape - [b]Fullscreen[/b] gives the most room.\n- Press [b]F9[/b] for a debug view of what the other powers hold and think.")
+	_rules_p(vb, "Each AI power has a character of its own - hawks, deterrers, opportunists, pacifists, peacemakers, schemers - and plays to it: how readily it trades, keeps its word, threatens, strikes or stands down. Which is which, you find out at the table. Some think three levels deep: what they believe, what they think the others think of them, and how each move will be read before they make it. Press [b]F9[/b] to watch them think - but that is cheating.")
 
 # ====================================================================== end
 func _finish() -> void:
