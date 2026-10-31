@@ -46,18 +46,20 @@ func logs_since(g: NPGame, n: int) -> String:
 		s += str(g.log_entries[i].text) + "\n"
 	return s
 
-## Keep asking until the AI answers (it may decline; a refusal never costs the turn).
+## Keep asking until the AI answers: a decline uses up the move, so each try is staged as a fresh turn.
 func offer_until_answered(g: NPGame, from, key: String, to_id: int) -> String:
 	for i in range(200):
 		var res := g.trade_offer(from, card(from, key).id, to_id)
 		if res != "declined":
 			return res
+		g.phase = "play"
+		g.war_queue = []
 	return "never answered"
 
 func _init() -> void:
 	var cards_in_play := 0
 
-	# ---- 1. you offer; a refusal costs nothing
+	# ---- 1. you offer; a refusal uses up your move but costs no card
 	var g := game([["uranium", "short", "warhead"], ["refinement", "long", "uranium"], ["testing"], ["counter"]])
 	cards_in_play = _total(g)
 	var me = g.players[0]
@@ -72,7 +74,9 @@ func _init() -> void:
 		if res != "declined":
 			break
 		declined += 1
-		check(me.hand.size() == 3 and me.trade.is_empty() and g.phase == "play" and g.cur() == me, "a refusal returns the card and keeps your turn") if declined == 1 else null
+		check(me.hand.size() == 3 and me.trade.is_empty() and g.phase == "war" and g.cur() == me, "a refusal returns the card, and the offer was your move") if declined == 1 else null
+		g.phase = "play"
+		g.war_queue = []
 	check(res == "accepted" and g.prompt.is_empty(), "when Volkov answers, the deal is done - your offer was your acceptance (after %d refusals)" % declined)
 	check(not logs_since(g, n0).to_lower().contains("short range") and not logs_since(g, n0).to_lower().contains("uranium"), "the log never names a traded card")
 	var y = vol.trade[vol.trade.size() - 1]
@@ -121,7 +125,7 @@ func _init() -> void:
 	var r3 := g.trade_offer(vol, card(vol, "warhead").id, 0)
 	check(r3 == "prompt" and g.prompt.type == "trade" and g.prompt.player == me and g.prompt.get("card_key", "") == "warhead", "an offer to you shows you the card and asks you to answer")
 	g.answer_trade(-1)
-	check(vol.hand.size() == 3 and vol.trade.is_empty() and g.prompt.is_empty() and g.cur() == vol and g.phase == "play", "declining sends the card home; Volkov's turn goes on")
+	check(vol.hand.size() == 3 and vol.trade.is_empty() and g.prompt.is_empty() and g.cur() == vol and g.phase == "war", "declining sends the card home; the offer was Volkov's move")
 	var r3b := ""
 	g.phase = "play"
 	r3b = g.trade_offer(vol, card(vol, "warhead").id, 0)

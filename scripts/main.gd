@@ -1245,7 +1245,7 @@ func _build_menu() -> Control:
 	cols.add_child(right)
 
 	var b1 := _box(left, "Classic rules")
-	b1.add_child(_lbl("Adapted from the original rules. Each turn you draw a card OR offer a trade - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.", 14, C_MUT, null, true))
+	b1.add_child(_lbl("Adapted from the original rules. Each turn you draw a card, offer a trade OR make a threat - and a trading partner may deceive you. Anyone can Test or Attack, in order of play around the table.", 14, C_MUT, null, true))
 
 	var b3 := _box(right, "The table")
 	b3.add_child(_lbl("PLAYERS AT THE TABLE", 12, C_MUT, MONO))
@@ -1531,7 +1531,9 @@ func _on_event(t: String, d: Dictionary) -> void:
 		"demand_paid":
 			if d.to == ME:
 				fresh[d.c.id] = true
-				_toast("%s gives in and hands you %s." % [d.from.name, NPGame.INFO[d.c.key].name])
+				_toast("%s gives in: you trade your %s for their %s." % [d.from.name, NPGame.INFO[d.offer.key].name, NPGame.INFO[d.c.key].name])
+			elif d.from == ME:
+				fresh[d.offer.id] = true
 		"draw":
 			if d.p == ME:
 				fresh[d.c.id] = true
@@ -2351,8 +2353,14 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		rb2.pressed.connect(_act_research)
 		bar.add_child(rb2)
 		btn["research"] = rb2
+		var thb := _big(_btn("Threaten...", "danger", 18), 76.0)
+		thb.disabled = G.threat_targets(ME).is_empty()
+		thb.tooltip_text = "Your move for the turn, instead of drawing or offering a trade."
+		thb.pressed.connect(_threaten_modal)
+		bar.add_child(thb)
+		btn["threaten"] = thb
 		if not L.can_research:
-			bar.add_child(_lbl("The deck is empty - offer a trade, or skip.", 13, C_MUT))
+			bar.add_child(_lbl("The deck is empty - offer a trade, threaten, or skip.", 13, C_MUT))
 		if not L.can_research:
 			var sk := _btn("Skip turn")
 			sk.pressed.connect(func():
@@ -2377,11 +2385,6 @@ func _classic_actions(bar: HFlowContainer) -> void:
 		ab.pressed.connect(_attack_modal)
 		bar.add_child(ab)
 		btn["attack"] = ab
-		var thb := _big(_btn("Threaten...", "danger", 18), 56.0)
-		thb.disabled = G.threat_targets(ME).is_empty()
-		thb.pressed.connect(_threaten_modal)
-		bar.add_child(thb)
-		btn["threaten"] = thb
 
 
 func _render_side() -> void:
@@ -2521,7 +2524,7 @@ func _drop_offer(p: NPGame.Player, data: Dictionary) -> void:
 	_close_popup()
 	var res := G.trade_offer(ME, int(data.cid), p.id)
 	if res == "declined":
-		_toast("No deal with %s - offer again, or draw instead." % p.name)
+		_toast("No deal with %s." % p.name)
 	_after_human()
 
 ## Controls inside a drop target must not swallow the drop: let mouse events pass up to it.
@@ -2736,10 +2739,12 @@ func _threaten_modal() -> void:
 	_close_btn(vb, "Cancel")
 	vb.add_child(_rtl("Only players you could attack can be threatened. They may give in or refuse - if they refuse nothing happens automatically, so be ready to follow through (or not).", 15, Color("#ddd3b4")))
 	var kinds := [
-		["demand", "Hand over a card", "They choose a card from their hand and give it to you, face down - a frightened power may give you the card it thinks you need most."],
+		["demand", "Force a trade", "You put up a card of yours; they must give you one of theirs in return - a frightened power may give you the one it thinks you need most."],
 		["threat", "Disarm", "They return ALL their Capability cards to the deck."],
 	]
 	for k in kinds:
+		if k[0] == "demand" and ME.hand.is_empty():
+			continue
 		var fl := _atk_panel(vb, k[1], k[2])
 		for tid in ids:
 			var who: NPGame.Player = G.players[tid]
@@ -2749,27 +2754,17 @@ func _threaten_modal() -> void:
 			var b := _btn("Threaten " + who.name + rel, "danger")
 			var kind: String = k[0]
 			b.pressed.connect(func():
+				if kind == "demand":
+					_force_trade_modal(tid)
+					return
 				_close_modal()
-				G.war_declare(ME, {"kind": kind, "target": tid})
+				G.play_threat(ME, {"kind": kind, "target": tid})
 				_after_human())
 			fl.add_child(b)
 			modal_btns.append({"kind": "threaten", "button": b})
 
-## You are threatened to hand over a card: choose which one - or refuse.
-func _demand_modal() -> void:
-	var pr := G.prompt
-	if pr.is_empty() or not pr.player.human or modal != null:
-		return
-	var vb := _open_modal("You are threatened", true, true, false)
-	var txt := "[b]%s[/b] threatens you: [b]hand over a card[/b] - any one you choose - or else." % pr.from.name
-	var reach := []
-	for av in G.attack_types(pr.from):
-		if av.targets.has(ME.id):
-			reach.append(av.type)
-	if not reach.is_empty():
-		txt += "\n\nThey [b]can[/b] strike you (%s)." % ", ".join(reach.map(func(r): return {"short": "Short range", "long": "Long range", "super": "Superpower"}[r]))
-	txt += "\n\nPick the card to give them (only the two of you will know which), or refuse. If you refuse, nothing happens automatically - but they may attack."
-	vb.add_child(_rtl(txt, 15, Color("#ddd3b4")))
+## A row of the cards in your hand, each with a button that passes its id to `chosen`.
+func _hand_picker(vb: VBoxContainer, label: String, kind: String, chosen: Callable) -> void:
 	var fl := HFlowContainer.new()
 	fl.add_theme_constant_override("h_separation", 10)
 	fl.add_theme_constant_override("v_separation", 10)
@@ -2779,16 +2774,48 @@ func _demand_modal() -> void:
 		var cell := VBoxContainer.new()
 		cell.add_theme_constant_override("separation", 4)
 		cell.add_child(_tex(c.key, 76))
-		var g := _btn("Give", "default", 13)
+		var g := _btn(label, "default", 13)
 		var cid: int = c.id
-		g.pressed.connect(func():
-			_close_modal(true)
-			G.answer_demand(cid)
-			_after_human())
+		g.pressed.connect(func(): chosen.call(cid))
 		cell.add_child(g)
 		fl.add_child(cell)
-		modal_btns.append({"kind": "demand_give", "button": g})
+		modal_btns.append({"kind": kind, "button": g})
 	vb.add_child(fl)
+
+## You force a trade on a player: choose the card you put up.
+func _force_trade_modal(tid: int) -> void:
+	var vb := _open_modal("Force a trade", true, false, true)
+	_close_btn(vb, "Cancel")
+	vb.add_child(_rtl("Which card do you put up? [b]%s[/b] sees it, then gives you a card of their choice in return - or refuses, and you keep it." % G.players[tid].name, 15, Color("#ddd3b4")))
+	_hand_picker(vb, "Offer", "threaten", func(cid):
+		_close_modal()
+		G.play_threat(ME, {"kind": "demand", "target": tid, "offer": cid})
+		_after_human())
+
+## You are threatened with a forced trade: choose the card you give back - or refuse.
+func _demand_modal() -> void:
+	var pr := G.prompt
+	if pr.is_empty() or not pr.player.human or modal != null:
+		return
+	var vb := _open_modal("You are threatened", true, true, false)
+	var offered: Dictionary = {}
+	for c in pr.from.hand:
+		if c.id == int(pr.offer):
+			offered = c
+	var txt := "[b]%s[/b] threatens you: [b]trade[/b] - take their [b]%s[/b] and give them a card of your choice, or else." % [pr.from.name, NPGame.INFO[offered.key].name]
+	var reach := []
+	for av in G.attack_types(pr.from):
+		if av.targets.has(ME.id):
+			reach.append(av.type)
+	if not reach.is_empty():
+		txt += "\n\nThey [b]can[/b] strike you (%s)." % ", ".join(reach.map(func(r): return {"short": "Short range", "long": "Long range", "super": "Superpower"}[r]))
+	txt += "\n\nPick the card to give them (only the two of you will know what changed hands), or refuse and you both keep your cards. If you refuse, nothing happens automatically - but they may attack."
+	vb.add_child(_rtl(txt, 15, Color("#ddd3b4")))
+	vb.add_child(_tex(offered.key, 96))
+	_hand_picker(vb, "Give", "demand_give", func(cid):
+		_close_modal(true)
+		G.answer_demand(cid)
+		_after_human())
 	var n := _btn("Refuse", "primary")
 	n.pressed.connect(func():
 		_close_modal(true)
@@ -2876,16 +2903,16 @@ func _rules_classic(vb: VBoxContainer) -> void:
 		"Superpower: hold all four Capabilities + a test, and strike again and again"])
 	_rules_h(vb, "Set up")
 	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40, 5 players = 48[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
-	_rules_h(vb, "Your turn: draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the draw pile.\n- [b]Trade[/b]: drag a card from your hand onto another player's [b]trade area[/b] to offer it.\n- If the draw pile is empty you can only trade, or skip your turn.")
+	_rules_h(vb, "Your turn: one move - draw, trade or threaten")
+	_rules_p(vb, "- [b]Research[/b]: draw a card from the draw pile.\n- [b]Trade[/b]: drag a card from your hand onto another player's [b]trade area[/b] to offer it.\n- [b]Threaten[/b]: see below.\n- If the draw pile is empty you can only trade, threaten or skip your turn.")
 	_rules_h(vb, "Trading - and you can be cheated")
-	_rules_p(vb, "- The player you offer a card to [b]sees it[/b] before deciding; nobody else does. The card they answer with stays [b]face down[/b] until it arrives in your hand - and the rest of the table never sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- A refusal never costs your turn: offer again, to the same player or another, or draw instead.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
+	_rules_p(vb, "- The player you offer a card to [b]sees it[/b] before deciding; nobody else does. The card they answer with stays [b]face down[/b] until it arrives in your hand - and the rest of the table never sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- An offer is your move for the turn, whether it is answered or declined.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
 	_rules_h(vb, "Nuclear exchanges")
-	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b]. After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack, threaten - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
+	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b]. After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent weapons go to the set-aside pile. A [b]Superpower[/b] strikes for free, as often as it likes.\n- An attack puts the Capability cards it needs on the table for all to see.\n- An eliminated player's hand is turned face up and stays on show in their seat.")
 	_rules_h(vb, "Threats and disarming")
-	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window): name a player you could attack, and make one of two demands. [b]Hand over a card[/b]: they choose a card from their hand and give it to you face down - a frightened power may hand over the one it thinks you need most. [b]Disarm[/b]: they return [b]all their Capability cards[/b] to the deck. Either way they may refuse instead. A refusal changes nothing by itself, so a threat is only as good as your willingness to follow it up - and being shaken down costs you their trust.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The other powers may disarm too once they have tested, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
+	_rules_p(vb, "- [b]Threaten...[/b] (your move for the turn, instead of drawing or trading): name a player you could attack, and make one of two demands. [b]Force a trade[/b]: you put up a card of yours, they see it and give you a card of their choice in return, and the two swap at once, face down - a frightened power may give you the one it thinks you need most. [b]Disarm[/b]: they return [b]all their Capability cards[/b] to the deck. Either way they may refuse instead, and nothing changes hands. A refusal changes nothing by itself, but you are first to declare in the exchange window that follows, so a threat is only as good as your willingness to follow it up - and forcing a trade costs you their trust.\n- [b]Disarm[/b] (top bar) - once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn: return all your Capability cards to the deck. It is a public signal of peace: the other powers trust you more - the cautious ones most - and are readier to accept your stand-down. But you can no longer strike back, and an aggressive power may see an easy target, though the whole table condemns an attack on a power that has disarmed. Attack or threaten again later and they will see it as a breach of faith. The other powers may disarm too once they have tested, if they feel safe and trust the table - the more peaceful characters especially. If everyone disarms, you are left with a non-nuclear world.")
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
 	_rules_h(vb, "Mutually Assured Destruction")
@@ -3351,9 +3378,6 @@ func _autotest() -> void:
 				continue
 			# exchange window
 			if btn.has("stand") and is_instance_valid(btn.stand):
-				if btn.has("threaten") and not btn.threaten.disabled and randf() < 0.5:
-					btn.threaten.pressed.emit()
-					continue
 				if btn.has("attack") and not btn.attack.disabled:
 					btn.attack.pressed.emit()
 					await get_tree().process_frame
@@ -3379,6 +3403,9 @@ func _autotest() -> void:
 				if not shot_taken and iter > 40 and G.turn_no > 4:
 					shot_taken = true
 					await _shot("%s/classic-%sp-board.png" % [out_dir, run])
+				if btn.has("threaten") and not btn.threaten.disabled and randf() < 0.3:
+					btn.threaten.pressed.emit()
+					continue
 				if randf() < 0.3 and not ME.hand.is_empty():
 					var hc := _first_hand_card()
 					if hc != null:
@@ -3446,7 +3473,6 @@ func _stage(np: String, mine: Array, tested: bool) -> void:
 		h.hand.append(sh)
 	G.turn = 0
 	G.phase = "play"
-	G.trade_tried = false
 	G.war_queue = []
 	G.debts = []
 	G.log_entries.clear()

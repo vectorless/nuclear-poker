@@ -54,7 +54,6 @@ var round_no: int = 1
 var phase: String = "play"        # honour | play | war
 var debts: Array = []             # {from, to, got, pledge} - `to` owes `from` a card on their next turn
 var war_queue: Array = []         # player ids still to declare in this exchange window
-var trade_tried: bool = false     # AI has already made its one trade offer this turn
 var last_threat: Dictionary = {}  # player id -> turn_no of their last threat (AI cooldown)
 var over: bool = false
 var result: Dictionary = {}
@@ -496,7 +495,6 @@ func end_turn() -> void:
 	turn = i
 	turn_no += 1
 	phase = "play"
-	trade_tried = false
 	war_queue = []
 	_void_debts()
 	if not _debts_of(cur()).is_empty():
@@ -540,7 +538,7 @@ func play_skip(p: Player) -> bool:
 #   3. you accept or decline that pair. If you accept, your card goes to them at once, but their card
 #      stays in their trade area as a pledge and only reaches you on THEIR next turn - when they may
 #      deliver it or break the deal (deception).
-# A refusal never costs a turn: you may offer again (to anyone) or draw instead.
+# An offer is the turn's move: answered or declined, the exchange window follows.
 # After each turn there is an exchange window: starting with the player who just played and going
 # clockwise, anyone may test or attack ("nuclear exchanges in order of play" house rule).
 func _debts_of(p: Player) -> Array:
@@ -587,7 +585,6 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 		return "invalid"
 	x.pub = false      # shown to the player it is offered to, hidden from the rest of the table
 	p.trade.append(x)
-	trade_tried = true
 	log_msg("%s offers %s a card." % [p.name, t.name])
 	event.emit("trade_offer", {"from": p, "to": t, "c": x})
 	if t.human:
@@ -596,6 +593,7 @@ func trade_offer(p: Player, card_id: int, target_id: int) -> String:
 	var yid := ai_counter_offer(t, p, x)
 	if yid < 0:
 		_cancel_offer(p, t, "%s declines to trade." % t.name)
+		_after_play()      # offering was the move, answered or not
 		return "declined"
 	_place_counter(t, yid, p, x)
 	return _decide_pair(p, t, x)
@@ -654,6 +652,7 @@ func answer_trade(counter_id: int) -> bool:
 	var x = _trade_card(p, int(pr.card_id))
 	if counter_id < 0 or x == null or not p.alive:
 		_cancel_offer(p, t, "%s declines to trade." % t.name)
+		_after_play()      # offering was the move, answered or not
 		return true
 	_place_counter(t, counter_id, p, x)
 	_decide_pair(p, t, x)
@@ -769,8 +768,11 @@ func ai_honour(p: Player) -> void:
 func ai_play_classic(p: Player) -> bool:
 	ai_maybe_disarm(p)
 	var B := belief(p)
+	var th := _ai_threat(p, B)
+	if not th.is_empty() and play_threat(p, th):
+		return true
 	var want := false
-	if not trade_tried and p.hand.size() >= 1:
+	if p.hand.size() >= 1:
 		if deck.is_empty():
 			want = true
 		elif p.hand.size() >= 3:
@@ -793,9 +795,8 @@ func ai_play_classic(p: Player) -> bool:
 				break
 			if not ai_would_deal(p, t, c):
 				continue      # an offer commits: only make it to someone whose promise is worth the card
-			var res := trade_offer(p, c.id, t.id)
-			if res == "accepted" or res == "prompt":
-				return true
+			if trade_offer(p, c.id, t.id) != "invalid":
+				return true      # one offer is the move, whatever the answer
 	if not deck.is_empty():
 		return play_research(p)
 	return play_skip(p)
@@ -807,6 +808,7 @@ func answer_threat(comply: bool) -> bool:
 	var pr := prompt
 	prompt = {}
 	_resolve_threat(pr.from, pr.player, comply)
+	_after_play()
 	return true
 
 func _resolve_threat(p: Player, t: Player, comply: bool) -> void:
@@ -820,11 +822,11 @@ func _resolve_threat(p: Player, t: Player, comply: bool) -> void:
 	var names := _return_caps(t)
 	log_msg("%s gives in and returns %s to the deck." % [t.name, ", ".join(names)], "reveal")
 	event.emit("disarm_all", {"p": t})
-	_rebuild_war_queue((p.id + 1) % players.size())
 
-## Threatened to hand over a card: the threatened player chooses which card from their hand (`card_id`),
-## or refuses (-1). It changes hands face down - only the two of them know what it was. Refusing changes
-## nothing by itself: the threat is only as good as the threatener's will to strike.
+## A forced trade: the threatener has put up a card (`offer`); the threatened player sees it and chooses
+## a card of their own to give back (`card_id`), or refuses (-1). The cards swap at once, face down - only
+## the two of them know what changed hands. Refusing changes nothing by itself: both keep their cards, and
+## the threat is only as good as the threatener's will to strike.
 func answer_demand(card_id: int) -> bool:
 	if prompt.is_empty() or prompt.get("type", "") != "demand":
 		return false
@@ -832,36 +834,42 @@ func answer_demand(card_id: int) -> bool:
 	if card_id >= 0 and not pr.player.hand.any(func(c): return c.id == card_id):
 		return false
 	prompt = {}
-	_resolve_demand(pr.from, pr.player, card_id)
+	_resolve_demand(pr.from, pr.player, int(pr.offer), card_id)
+	_after_play()
 	return true
 
-func _resolve_demand(p: Player, t: Player, card_id: int) -> void:
-	if t.hand.is_empty():
-		log_msg("%s has no cards in hand to hand over - the threat is empty." % t.name, "quiet")
-		return
+func _resolve_demand(p: Player, t: Player, offer_id: int, card_id: int) -> void:
 	if card_id < 0:
-		log_msg("%s REFUSES to hand over a card." % t.name, "reveal")
+		log_msg("%s REFUSES the forced trade." % t.name, "reveal")
 		return
-	for i in range(t.hand.size()):
-		if t.hand[i].id == card_id:
-			var c = t.hand.pop_at(i)
-			c.pub = false
-			p.hand.append(c)
-			_progress()
-			log_msg("%s gives in and hands %s a card." % [t.name, p.name], "reveal")
-			event.emit("demand_paid", {"from": t, "to": p, "c": c})
-			_rebuild_war_queue((p.id + 1) % players.size())      # the new card may make a test or a strike possible
-			return
+	var x := _take_from_hand(p, offer_id)
+	var y := _take_from_hand(t, card_id)
+	t.hand.append(x)
+	p.hand.append(y)
+	_progress()
+	log_msg("%s gives in and trades a card with %s." % [t.name, p.name], "reveal")
+	event.emit("demand_paid", {"from": t, "to": p, "c": y, "offer": x})
 
-## AI threatened to hand over a card: the id of the card it gives, or -1 to refuse. Fear makes it give in
-## (more readily than to a demand to disarm: one card costs less), a grudge or a counter-strike of its own
-## makes it stand firm. A frightened power hands over what it judges the threatener wants most, from what
-## it can see of them; a calmer one gives in with its least useful card.
-func ai_answer_demand(t: Player, from: Player) -> int:
+func _take_from_hand(p: Player, card_id: int) -> Dictionary:
+	for i in range(p.hand.size()):
+		if p.hand[i].id == card_id:
+			var c: Dictionary = p.hand.pop_at(i)
+			c.pub = false
+			return c
+	return {}
+
+## AI threatened with a forced trade: the id of the card it gives back, or -1 to refuse. Fear makes it give
+## in, a card it wants on offer tempts it, a grudge or a counter-strike of its own makes it stand firm. A
+## frightened power hands over what it judges the threatener wants most, from what it can see of them; a
+## calmer one gives in with its least useful card.
+func ai_answer_demand(t: Player, from: Player, offer_id: int) -> int:
 	if t.hand.is_empty():
 		return -1
 	var fear := float(t.persona.fear)
 	var pr := 0.15 + 0.8 * fear - 0.5 * grudge(t, from)
+	for c in from.hand:
+		if c.id == offer_id:
+			pr += 0.3 * (_gain(t, c) - 0.5)
 	if has_all_caps(from):
 		pr += 0.15
 	if can_counter(t):
@@ -940,7 +948,7 @@ func ai_comply_threat(t: Player, from: Player) -> bool:
 		pr -= 0.35
 	return rng.randf() < clampf(pr, 0.05, 0.9)
 
-## An AI power that cannot (or will not) simply attack may lean on a neighbour holding Capabilities.
+## An AI power may spend its move leaning on a player it could strike.
 func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 	if int(last_threat.get(p.id, -99)) > turn_no - 4:
 		return {}
@@ -957,14 +965,15 @@ func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 			best = tid
 	if best < 0 or best_v <= 0.9 or rng.randf() >= 0.3 + 0.3 * float(p.persona.aggr):
 		return {}
-	# Leaning on them: shake them down for a card p is missing and they may well hold - or make them disarm.
+	# Leaning on them: force a trade for a card p is missing and they may well hold - or make them disarm.
 	var x := by_id(best)
 	var need := 0.0
 	for k in (CAPS if p.tested else TECH + CAPS):
 		if not holds(p, k):
 			need = maxf(need, bp(B, x, k))
-	var shake := need > 0.2 and not x.hand.is_empty() and rng.randf() < 0.5
-	return {"kind": "demand" if shake else "threat", "target": best}
+	if need > 0.2 and not x.hand.is_empty() and not p.hand.is_empty() and rng.randf() < 0.5:
+		return {"kind": "demand", "target": best, "offer": least_useful(p).id}
+	return {"kind": "threat", "target": best}
 
 func _rebuild_war_queue(start_pid: int) -> void:
 	war_queue = []
@@ -1004,9 +1013,40 @@ func caps_held(x: Player) -> Array:
 				res.append(c)
 	return res
 
+func _valid_threat(p: Player, c: Dictionary) -> bool:
+	if c.kind == "demand":
+		var offer := int(c.get("offer", -1))
+		return threat_targets(p).has(int(c.get("target", -1))) and p.hand.any(func(x): return x.id == offer) \
+			and not by_id(int(c.target)).hand.is_empty()
+	return c.kind == "threat" and threat_targets(p).has(int(c.get("target", -1)))
+
+## Threatening is a player's move for the turn, like drawing or offering a trade: answered or refused,
+## the exchange window follows - with the threatener first, free to carry the threat out.
+func play_threat(p: Player, c: Dictionary) -> bool:
+	if phase != "play" or not p.alive or cur() != p or not prompt.is_empty() or not _valid_threat(p, c):
+		return false
+	_breach_of_faith(p)
+	last_threat[p.id] = turn_no
+	var t := by_id(int(c.target))
+	if c.kind == "threat":
+		log_msg("%s threatens %s: give up ALL your Capability cards - or else." % [p.name, t.name], "attack")
+		event.emit("threat", {"from": p, "to": t})
+		if t.human:
+			prompt = {"type": "threat", "player": t, "from": p}
+			return true
+		_resolve_threat(p, t, ai_comply_threat(t, p))
+	else:
+		_shift_trust(t, p, -0.06)      # nobody likes being strong-armed
+		log_msg("%s threatens %s: trade a card with me - or else." % [p.name, t.name], "attack")
+		event.emit("threat", {"from": p, "to": t})
+		if t.human:
+			prompt = {"type": "demand", "player": t, "from": p, "offer": int(c.offer)}
+			return true
+		_resolve_demand(p, t, int(c.offer), ai_answer_demand(t, p, int(c.offer)))
+	_after_play()
+	return true
+
 func _valid_war(p: Player, c: Dictionary) -> bool:
-	if c.kind == "threat" or c.kind == "demand":
-		return threat_targets(p).has(int(c.get("target", -1)))
 	if c.kind == "test":
 		return can_test(p)
 	if c.kind == "attack":
@@ -1020,29 +1060,6 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 		return false
 	war_queue.pop_front()
 	if c.kind == "pass" or not _valid_war(p, c):
-		return true
-	if c.kind == "threat":
-		var tt := by_id(int(c.target))
-		_breach_of_faith(p)
-		last_threat[p.id] = turn_no
-		log_msg("%s threatens %s: give up ALL your Capability cards - or else." % [p.name, tt.name], "attack")
-		event.emit("threat", {"from": p, "to": tt})
-		if tt.human:
-			prompt = {"type": "threat", "player": tt, "from": p}
-		else:
-			_resolve_threat(p, tt, ai_comply_threat(tt, p))
-		return true
-	if c.kind == "demand":
-		var td := by_id(int(c.target))
-		_breach_of_faith(p)
-		last_threat[p.id] = turn_no
-		_shift_trust(td, p, -0.06)      # nobody likes being shaken down
-		log_msg("%s threatens %s: hand over a card - or else." % [p.name, td.name], "attack")
-		event.emit("threat", {"from": p, "to": td})
-		if td.human and not td.hand.is_empty():
-			prompt = {"type": "demand", "player": td, "from": p}
-		else:
-			_resolve_demand(p, td, ai_answer_demand(td, p) if not td.human else -1)
 		return true
 	var alive_before := alive_list().size()
 	apply_war(p, c)
@@ -1187,9 +1204,6 @@ func ai_war_choice(p: Player) -> Dictionary:
 				best = {"kind": "attack", "type": o.type, "target": tid}
 	if best != null and best_score > 0.35:
 		return best
-	var th := _ai_threat(p, B)
-	if not th.is_empty():
-		return th
 	return pass_c
 
 func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:

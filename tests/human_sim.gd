@@ -87,11 +87,15 @@ func _human(g: NPGame, me: NPGame.Player) -> void:
 		if r < 0.3 and not me.hand.is_empty():
 			var o: Array = g.others(me)
 			g.trade_offer(me, me.hand[0].id, o[g.rng.randi() % o.size()].id)
-			if g.phase == "play" and g.prompt.is_empty() and g.rng.randf() < 0.5:
-				if not g.deck.is_empty():
-					g.play_research(me)
-				else:
-					g.play_skip(me)
+		elif r < 0.5 and not g.threat_targets(me).is_empty():
+			var ts := g.threat_targets(me)
+			var tgt: int = ts[g.rng.randi() % ts.size()]
+			if g.rng.randf() < 0.5 and not me.hand.is_empty():
+				g.play_threat(me, {"kind": "demand", "target": tgt, "offer": me.hand[g.rng.randi() % me.hand.size()].id})
+			else:
+				g.play_threat(me, {"kind": "threat", "target": tgt})
+			if g.phase == "play" and g.prompt.is_empty():      # refused as invalid (their hand is empty)
+				g.play_research(me) if not g.deck.is_empty() else g.play_skip(me)
 		elif not g.deck.is_empty():
 			g.play_research(me)
 		else:
@@ -100,9 +104,6 @@ func _human(g: NPGame, me: NPGame.Player) -> void:
 		var L := g.legal(me)
 		if L.can_test and r < 0.7:
 			g.war_declare(me, {"kind": "test"})
-		elif not g.threat_targets(me).is_empty() and r < 0.5:
-			var ts := g.threat_targets(me)
-			g.war_declare(me, {"kind": "threat" if g.rng.randf() < 0.5 else "demand", "target": ts[g.rng.randi() % ts.size()]})
 		elif not L.attacks.is_empty() and r < 0.8:
 			var a: Dictionary = L.attacks[g.rng.randi() % L.attacks.size()]
 			g.war_declare(me, {"kind": "attack", "type": a.type, "target": a.targets[0] if not a.targets.is_empty() else -1})
