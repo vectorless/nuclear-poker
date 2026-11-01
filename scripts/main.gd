@@ -1325,13 +1325,16 @@ func _build_menu() -> Control:
 	var how := _btn("How to play")
 	how.pressed.connect(_rules_modal)
 	row.add_child(how)
+	var lic := _btn("Licences")
+	lic.pressed.connect(_licences_modal)
+	row.add_child(lic)
 	var fsm := _btn(_fs_label())
 	fsm.pressed.connect(_toggle_fullscreen)
 	row.add_child(fsm)
 	btn["fs_menu"] = fsm
 	left.add_child(row)
 	btn["begin"] = begin
-	var cred := _rtl("Original game by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url], [url=mailto:VinayGupta@butteredsidedown.co.uk]VinayGupta@butteredsidedown.co.uk[/url]) & [b]Dan Carter[/b] ([url=https://files.howtolivewiki.com/nuclear_poker_card_game_proliferation.pdf]original rules, PDF[/url]), GNU FDL licensed. Unofficial digital adaptation. \"The only winning move is not to play.\"", 12, C_MUT)
+	var cred := _rtl("Original game by [b]Vinay Gupta[/b] ([url=https://twitter.com/leashless]@leashless[/url], [url=mailto:VinayGupta@butteredsidedown.co.uk]VinayGupta@butteredsidedown.co.uk[/url]) & [b]Dan Carter[/b] ([url=https://files.howtolivewiki.com/nuclear_poker_card_game_proliferation.pdf]original rules, PDF[/url]), GNU FDL licensed. Unofficial digital adaptation: code MIT, art and audio CC0, made with [url=https://godotengine.org]Godot Engine[/url]. \"The only winning move is not to play.\"", 12, C_MUT)
 	cred.meta_clicked.connect(func(m): OS.shell_open(str(m)))
 	right.add_child(cred)
 	_refresh_opts()
@@ -3092,6 +3095,64 @@ func _transcript_modal() -> void:
 	te.add_theme_font_override("font", MONO)
 	te.add_theme_font_size_override("font_size", 11)
 	te.custom_minimum_size = Vector2(0, clampf(get_viewport_rect().size.y * 0.84 - 220.0, 160.0, 520.0))
+	te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(te)
+
+## The licences: the game's own, the fonts', and - as Godot's MIT licence asks of every shipped build -
+## the engine's copyright notice and licence text, with the notices of its third-party components.
+func _licences_text() -> String:
+	var L: PackedStringArray = PackedStringArray()
+	L.append("NUCLEAR POKER")
+	L.append("Original game by Vinay Gupta & Dan Carter, GNU Free Documentation License.")
+	L.append("Unofficial digital adaptation by vectorless, https://github.com/vectorless/nuclear-poker")
+	L.append("")
+	L.append("Code: MIT License. Copyright (c) 2026 vectorless.")
+	L.append("Images, audio and music: public domain, CC0 1.0 Universal.")
+	L.append("Rules text: adapted from the original rules sheet (https://files.howtolivewiki.com/nuclear_poker_card_game_proliferation.pdf), GNU Free Documentation License 1.3 or later, no Invariant Sections, no Cover Texts.")
+	L.append("Full licence texts: LICENSE, LICENSE-ASSETS and LICENSE-RULES in the repository.")
+	L.append("")
+	L.append("FONTS")
+	L.append("Stardos Stencil, Courier Prime, UnifrakturCook, Old Standard TT, Oswald, Share Tech Mono: SIL Open Font License 1.1.")
+	L.append("Special Elite: Apache License 2.0.")
+	L.append("")
+	L.append("GODOT ENGINE")
+	L.append("This game uses Godot Engine, available under the following license:")
+	L.append("")
+	L.append(Engine.get_license_text().strip_edges())
+	L.append("")
+	L.append("THIRD-PARTY COMPONENTS OF GODOT ENGINE")
+	var licences_used := {}
+	for comp in Engine.get_copyright_info():
+		L.append("")
+		L.append(str(comp.name))
+		for part in comp.parts:
+			for cl in part.copyright:
+				L.append("  Copyright (c) " + str(cl))
+			L.append("  License: " + str(part.license))
+			licences_used[str(part.license)] = true
+	var info := Engine.get_license_info()
+	var names: Array = info.keys()
+	names.sort()
+	L.append("")
+	L.append("LICENSE TEXTS")
+	for n in names:
+		L.append("")
+		L.append("=== %s ===" % n)
+		L.append(str(info[n]).strip_edges())
+	return "\n".join(L)
+
+func _licences_modal() -> void:
+	var text := _licences_text()
+	var vb := _open_modal("Licences", false, false, false)
+	_close_btn(vb, "Close")
+	vb.add_child(_lbl("Code MIT, art and audio CC0, rules GNU FDL - and the notices of Godot Engine and the components it is built from.", 13, C_MUT, null, true))
+	var te := TextEdit.new()
+	te.text = text
+	te.editable = false
+	te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	te.add_theme_font_override("font", MONO)
+	te.add_theme_font_size_override("font_size", 11)
+	te.custom_minimum_size = Vector2(0, clampf(get_viewport_rect().size.y * 0.84 - 180.0, 160.0, 560.0))
 	te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(te)
 

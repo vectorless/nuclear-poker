@@ -2,16 +2,22 @@
 
 ![A five-player game: Ambassador Lin has just struck President Reyes - his seat shows a skeleton and his cards lie burnt, the map marks his country, and The Atomic Herald reports the attack](docs/screenshot.png)
 
-Browser-playable digital adaptation of **Nuclear Poker** — a simple teaching game about nuclear strategy.
-You play the **Classic** rules sheet against two to four AI powers (3-5 players), trading cards (your partner sees what you offer; their card comes back face down, on their next turn - if they keep the deal).
-The Slow / Fog / Fast WAR modes and the Biowar (2000 / 2035) expansions were removed for now so the game can be built one
-mode at a time; they are in git history at the tag `all-modes`.
+Browser-playable digital adaptation of **Nuclear Poker**, a simple teaching game about nuclear strategy: collect the
+four Technologies to test a weapon, the four Capabilities to become a Superpower, and decide whether to nuke, threaten,
+trade with or disarm your neighbours. You play against two to four AI powers (3-5 players), each with traits of its own.
+Trades can be broken, threats can force a trade or a disarmament, anyone can strike out of turn, and the game ends in
+annihilation, a last power standing, a stand-down, hegemony, stalemate - or Mutually Assured Destruction, with a
+special edition of the paper. The full rules are under **How to play** in the game.
 
-Original game: Vinay Gupta and Dan Carter (GNU FDL licensed). The card art is new,
-painted for this version. Unofficial adaptation; the rules are adapted from the original sheet for play against AI powers.
+Only the Classic game is implemented; the Slow / Fog / Fast WAR modes and the Biowar expansions are in git history at
+the tag `all-modes`.
+
+Original game by Vinay Gupta and Dan Carter (GNU FDL licensed), adapted from the original rules sheet for play against
+AI powers. Unofficial adaptation. All art, portraits, photographs and audio are new, made for this version.
 
 ## Play
-In the browser: https://vectorless.github.io/nuclear-poker/
+- In the browser: https://vectorless.github.io/nuclear-poker/
+- On itch.io: https://vectorless.itch.io/nuclear-poker
 
 ## Run
 Open the folder in Godot 4.6+ and press Play (main scene: `scripts/main.tscn`).
@@ -29,6 +35,15 @@ the numbers it weighed.
 Tests (`godot --headless --path . -s tests/<name>.gd`): `rules_test`, `trade_test`, `persona_test`, `human_sim`, and
 `sim` (600 AI-vs-AI games, also run by CI).
 
+## Licensing
+- **Code** (scripts, scenes, tests, tools): [MIT](LICENSE).
+- **Images, audio and music** (`assets/`): public domain, [CC0 1.0](LICENSE-ASSETS). Use them for anything.
+- **Rules text** (How to play, the card descriptions, the summary above): adapted from Vinay Gupta and Dan Carter's
+  original sheet, so [GNU Free Documentation License 1.3](LICENSE-RULES), no invariant sections or cover texts.
+- **Fonts** (`fonts/`): SIL Open Font License 1.1, except Special Elite (Apache 2.0); licence files sit beside them.
+- **Godot Engine** and its third-party components: MIT and others. The game's **Licences** screen (main menu) shows
+  the full notices, as Godot's licence requires of a shipped build.
+
 ## Web / GitHub Pages
-`.github/workflows/pages.yml` runs the simulation, exports, and deploys on every push to `main`.
+`.github/workflows/pages.yml` runs the tests and the simulation, exports, and deploys on every push to `main`.
 Manual export: `godot --headless --export-release "Web" build/web/index.html`.
