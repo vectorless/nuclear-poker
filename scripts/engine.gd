@@ -159,7 +159,63 @@ func neighbors_of(p: Player) -> Array:
 func log_msg(text: String, tone: String = "info") -> void:
 	var e := {"n": turn_no, "text": text, "tone": tone}
 	log_entries.append(e)
+	if tracing:
+		transcript.append("T%d %s" % [turn_no, text])
 	event.emit("log", e)
+
+# ---------------------------------------------------------------- transcript (debug)
+## With `tracing` on, the game keeps a full transcript for analysis: every log line, the hidden
+## state at the start of each turn (every hand, the trust between players, debts) and the AI's
+## reasoning at each decision ("~" lines). Read it with transcript_text().
+var tracing := false
+var transcript: PackedStringArray = PackedStringArray()
+
+func trace(text: String) -> void:
+	if tracing:
+		transcript.append("      ~ " + text)
+
+func _keys(arr: Array) -> String:
+	return "-" if arr.is_empty() else ",".join(arr.map(func(c): return str(c.key)))
+
+func _pc(v: float) -> String:
+	return "%d%%" % int(round(v * 100.0))
+
+func _snapshot(title: String) -> void:
+	if not tracing:
+		return
+	transcript.append("")
+	transcript.append("== %s | turn %d, round %d | deck %d, set aside %d" % [title, turn_no, round_no, deck.size(), out.size()])
+	for p in players:
+		var who := "%s (%s)" % [p.name, "human" if p.human else str(p.persona.id)]
+		if not p.alive:
+			transcript.append("   %-30s OUT since turn %d" % [who, p.eliminated_turn])
+			continue
+		var tr: Array = []
+		for x in players:
+			if x != p and x.alive:
+				tr.append("%s %s" % [x.name, _pc(trust_of(p, x))])
+		transcript.append("   %-30s %s%s | hand [%s] | table [%s] | trade [%s] | trust: %s" % [who,
+			"TESTED" if p.tested else "untested", " SUPERPOWER" if is_superpower(p) else (" disarmed" if is_disarmed(p) else ""),
+			_keys(p.hand), _keys(p.table), _keys(p.trade), ", ".join(tr)])
+	for d in debts:
+		var pledge = _trade_card(by_id(d.to), int(d.pledge))
+		transcript.append("   debt: %s owes %s a card (pledged %s)" % [by_id(d.to).name, by_id(d.from).name, pledge.key if pledge != null else "?"])
+
+## The whole transcript as one text: the set-up, then the game.
+func transcript_text() -> String:
+	var head: PackedStringArray = PackedStringArray()
+	head.append("NUCLEAR POKER - debug transcript | seed %d | %d players | %s" % [rng.seed, players.size(), "over: " + str(result.get("kind", "?")) if over else "in progress"])
+	for p in players:
+		if p.human:
+			head.append("  %s: human" % p.name)
+		else:
+			var pe: Dictionary = p.persona
+			head.append("  %s: %s (%s) - trade %s, honest %s, aggression %s, fear %s, caution %s, alliance %s, peace %s, mind %d" % [
+				p.name, pe.title, pe.id, _pc(pv(p, "trade")), _pc(pv(p, "honest")), _pc(pv(p, "aggr")), _pc(pv(p, "fear")), _pc(pv(p, "caution")), _pc(pv(p, "ally")), _pc(pv(p, "peace")), int(pv(p, "mind"))])
+	head.append("Legend: 'T<n>' lines are the public log at turn n. '==' blocks show the hidden state at the start of a turn.")
+	head.append("'~' lines are an AI's private reasoning before a decision (scores are the engine's own units; trust starts at 60%).")
+	head.append("")
+	return "\n".join(head) + "\n".join(transcript)
 
 # ---------------------------------------------------------------- trust (hidden)
 func trust_of(viewer: Player, target: Player) -> float:
@@ -274,7 +330,10 @@ func ai_maybe_disarm(p: Player) -> bool:
 	if is_superpower(p):
 		pr *= 0.3
 	if rng.randf() < pr:
+		trace("%s disarms: nobody threatens it (max threat %s), average trust %s, chance %s - yes" % [p.name, _pc(max_t), _pc(avg_trust), _pc(pr)])
 		return disarm_caps(p)
+	if pr > 0.05:
+		trace("%s considered disarming (chance %s) - not this turn" % [p.name, _pc(pr)])
 	return false
 
 ## 0 = no grievance; up to ~0.6 for someone who has betrayed this player repeatedly.
@@ -313,6 +372,7 @@ func setup(opts: Dictionary) -> void:
 		for p in players:
 			p.hand.append(deck.pop_back())
 	turn = rng.randi_range(0, n - 1)
+	_snapshot("start - %s to play" % cur().name)
 
 # ---------------------------------------------------------------- basic actions
 func research(p: Player) -> bool:
@@ -364,8 +424,8 @@ func do_test(p: Player) -> bool:
 	return true
 
 # ---------------------------------------------------------------- attacks
-## One weapon per turn: a player who is not a Superpower may fire only one attack card in each turn's
-## exchange window. A Superpower may strike again and again.
+## One weapon per turn: a player who is not a Superpower may fire only one attack card in each turn -
+## on their own turn or in the exchange window after it. A Superpower may strike again and again.
 var attacked_on: Dictionary = {}      # player id -> turn_no of their last attack
 
 func is_superpower(p: Player) -> bool:
@@ -571,6 +631,7 @@ func end_game(kind: String, extra: Dictionary = {}) -> void:
 	over = true
 	result = {"kind": kind, "survivors": alive_list().map(func(p): return p.id)}
 	result.merge(extra)
+	_snapshot("GAME OVER - %s" % kind)
 	event.emit("over", result)
 
 # ---------------------------------------------------------------- turn flow
@@ -592,6 +653,7 @@ func end_turn() -> void:
 	_void_debts()
 	if not _debts_of(cur()).is_empty():
 		phase = "honour"
+	_snapshot("%s to play" % cur().name)
 	if deck.is_empty() and not over:
 		# Stalemate: nothing left to draw, and three full rounds have gone by without anyone testing,
 		# striking, trading or disarming - as long after you are out as while you are still playing.
@@ -724,7 +786,8 @@ func _finish_deal(p: Player, t: Player, x: Dictionary, y: Dictionary) -> void:
 			p.trade.pop_at(i)
 			break
 	x.pub = false
-	_progress()
+	if _gain(t, x) > 0.3:
+		_progress()      # a card new to its receiver moves the game on; duplicates passed around do not
 	_favour(t, p, x)
 	t.hand.append(x)
 	debts.append({"from": p.id, "to": t.id, "got": x.id, "pledge": y.id})
@@ -769,7 +832,8 @@ func honour(p: Player) -> bool:
 	var y = _trade_card(p, int(d.pledge))
 	var to := by_id(d.from)
 	debts.erase(d)
-	_progress()
+	if y == null or _gain(to, y) > 0.3:
+		_progress()
 	if y != null:
 		p.trade.erase(y)
 		y.pub = false
@@ -834,6 +898,7 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 	var thr := threat_on(B, from, t)
 	var pr := pv(t, "trade") + 0.25 * thr + 0.9 * (_gain(t, x) - 0.5) - 0.8 * grudge(t, from) + 0.6 * warmth(t, from)
 	if rng.randf() >= clampf(pr, 0.03, 0.95):
+		trace("%s declines %s's offer of %s: gain %.2f, threat from them %s, trust %s, chance to answer %s" % [t.name, from.name, x.key, _gain(t, x), _pc(thr), _pc(trust_of(t, from)), _pc(clampf(pr, 0.03, 0.95))])
 		return -1
 	if deep(t):
 		# answer with the card that serves the partnership best, not just the one t can most spare
@@ -845,15 +910,21 @@ func ai_counter_offer(t: Player, from: Player, x: Dictionary) -> int:
 				best_s = s
 				best = c
 		if best != null:
+			trace("%s answers %s's offer of %s (gain %.2f, chance %s) with %s: best deal score %.2f" % [t.name, from.name, x.key, _gain(t, x), _pc(clampf(pr, 0.03, 0.95)), best.key, best_s])
 			return best.id
 	var y = least_useful(t)
+	if y != null:
+		trace("%s answers %s's offer of %s (gain %.2f, chance %s) with its least useful card, %s" % [t.name, from.name, x.key, _gain(t, x), _pc(clampf(pr, 0.03, 0.95)), y.key])
 	return y.id if y != null else -1
 
 ## An offer is binding (if they answer, the deal is done), so AI p weighs it before making it:
 ## its own card against a face-down promise from t (expected value x trust in t).
 func ai_would_deal(p: Player, t: Player, x: Dictionary) -> bool:
 	var pr := 0.5 + 0.9 * (_expected_gain(p) * _pledge_faith(p, t) - usefulness(p, x) - 0.1) + 0.1 * (float(p.persona.trade) - 0.5)
-	return rng.randf() < clampf(pr, 0.05, 0.95)
+	var ok := rng.randf() < clampf(pr, 0.05, 0.95)
+	if tracing:
+		trace("%s weighs offering %s to %s: expected return %.2f x faith %.2f against its usefulness %.2f - chance %s, %s" % [p.name, x.key, t.name, _expected_gain(p), _pledge_faith(p, t), usefulness(p, x), _pc(clampf(pr, 0.05, 0.95)), "offers" if ok else "holds back"])
+	return ok
 
 func ai_honour(p: Player) -> void:
 	var ds := _debts_of(p)
@@ -879,7 +950,9 @@ func ai_honour(p: Player) -> void:
 				honest *= 0.3
 			elif danger > 0.3 or est_trust(p, creditor, p) > 0.75:
 				honest = maxf(honest, 0.9)
-	if rng.randf() < honest:
+	var keeps := rng.randf() < honest
+	trace("%s owes %s the pledged %s (usefulness %.2f): trust in them %s, chance of keeping the deal %s - %s" % [p.name, creditor.name, y.key if y != null else "?", usefulness(p, y) if y != null else 0.0, _pc(trust_of(p, creditor)), _pc(honest), "delivers" if keeps else "BREAKS it"])
+	if keeps:
 		honour(p)
 	else:
 		renege(p)
@@ -900,6 +973,8 @@ func ai_play_classic(p: Player) -> bool:
 			var lu = least_useful(p)
 			if lu != null and usefulness(p, lu) < 0.5 and rng.randf() < float(p.persona.trade) * 0.8:
 				want = true
+	if not want and not deck.is_empty():
+		trace("%s draws: %s" % [p.name, "fewer than three cards in hand" if p.hand.size() < 3 else "nothing in hand it can spare (least useful %.2f), or not in the mood to trade" % usefulness(p, least_useful(p))])
 	if want:
 		var keyed: Array = []
 		for o in others(p):
@@ -927,15 +1002,33 @@ func ai_play_classic(p: Player) -> bool:
 ## arm someone against it, against the table, or (for a schemer) against its rival.
 func _play_deep(p: Player, B: Dictionary) -> bool:
 	var best = null
-	var best_s := 0.15
+	# A trade is one card for a promise; a draw is a free card. While the pile lasts, a thin hand
+	# draws, and an offer has to promise clearly more than a draw would (the deal's score already
+	# counts the card given away, so it has to carry real goodwill or a spare card).
+	if not deck.is_empty() and p.hand.size() < 4:
+		trace("%s draws: only %d cards in hand" % [p.name, p.hand.size()])
+		return play_research(p)
+	var bar := 0.15 + (0.0 if deck.is_empty() else 0.5 * _expected_gain(p))
+	var best_s := bar
+	var seen: Array = []
 	for t in others(p):
 		if trust_of(p, t) < 0.25:
+			seen.append("%s: no (trust %s)" % [t.name, _pc(trust_of(p, t))])
 			continue      # will not deal with a known cheat
+		var top_s := -99.0
+		var top_c := ""
 		for c in p.hand:
 			var s := deal_score(p, t, c, B)
+			if s > top_s:
+				top_s = s
+				top_c = str(c.key)
 			if s > best_s:
 				best_s = s
 				best = {"t": t, "c": c}
+		if top_c != "":
+			seen.append("%s: %s %.2f" % [t.name, top_c, top_s])
+	if tracing:
+		trace("%s weighs its best offer to each partner against the bar %.2f (%s): %s" % [p.name, bar, "the pile is empty" if deck.is_empty() else "a draw is worth %.2f" % _expected_gain(p), "; ".join(seen)])
 	if best != null and trade_offer(p, best.c.id, best.t.id) != "invalid":
 		return true
 	if not deck.is_empty():
@@ -981,7 +1074,9 @@ func ai_maybe_propose(p: Player) -> bool:
 		return false
 	for x in others(p):
 		if not x.human and ceasefire_score(x, p, p) < 0.5:
+			trace("%s would like a stand-down (wants %s, peril %s) but foresees %s refusing (%.2f)" % [p.name, _pc(wants), _pc(risk), x.name, ceasefire_score(x, p, p)])
 			return false      # they would refuse, as far as p can tell
+	trace("%s proposes a stand-down: wants %s, peril %s, and foresees everyone agreeing" % [p.name, _pc(wants), _pc(risk)])
 	propose_ceasefire(p)
 	return true
 
@@ -1061,6 +1156,7 @@ func ai_answer_demand(t: Player, from: Player, offer_id: int) -> int:
 	if can_counter(t):
 		pr -= 0.3
 	if rng.randf() >= clampf(pr, 0.05, 0.9):
+		trace("%s refuses %s's forced trade: fear %s, grudge %s, chance of giving in %s" % [t.name, from.name, _pc(fear), _pc(grudge(t, from)), _pc(clampf(pr, 0.05, 0.9))])
 		return -1
 	if rng.randf() < fear + (0.2 if not can_counter(t) else 0.0):
 		var B := belief(t)
@@ -1071,8 +1167,11 @@ func ai_answer_demand(t: Player, from: Player, offer_id: int) -> int:
 			if v > best_v:
 				best_v = v
 				best = c
+		trace("%s gives in to %s (chance %s) and, afraid, hands over the card it thinks they want most: %s" % [t.name, from.name, _pc(clampf(pr, 0.05, 0.9)), best.key])
 		return best.id
 	var y = least_useful(t)
+	if y != null:
+		trace("%s gives in to %s (chance %s) with its least useful card, %s" % [t.name, from.name, _pc(clampf(pr, 0.05, 0.9)), y.key])
 	return y.id if y != null else -1
 
 ## How much X seems to want a card of kind `key`, as the viewer of belief B sees it: a Technology X
@@ -1136,7 +1235,9 @@ func ai_comply_threat(t: Player, from: Player) -> bool:
 		pr += 0.5 * pv(t, "peace")      # weapons are not worth a war to a peace-lover
 		if can_counter(t) and pv(t, "peace") >= 0.5 and pv(t, "aggr") > 0.0:
 			pr -= 0.3      # a peacemaker's deterrent is the one thing it will not give up
-	return rng.randf() < clampf(pr, 0.05, 0.9)
+	var yes := rng.randf() < clampf(pr, 0.05, 0.9)
+	trace("%s is told to disarm by %s: fear %s, %d Capabilities, grudge %s%s - chance %s, %s" % [t.name, from.name, _pc(pv(t, "fear")), held.size(), _pc(grudge(t, from)), ", can counter-strike" if can_counter(t) else "", _pc(clampf(pr, 0.05, 0.9)), "gives in" if yes else "refuses"])
+	return yes
 
 ## An AI power that will not simply attack may lean on a player it could strike.
 func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
@@ -1154,7 +1255,10 @@ func _ai_threat(p: Player, B: Dictionary) -> Dictionary:
 			best_v = v
 			best = tid
 	if best < 0 or best_v <= 0.9 or rng.randf() >= 0.3 + 0.3 * float(p.persona.aggr):
+		if best >= 0 and best_v > 0.9:
+			trace("%s could lean on %s (value %.2f) but holds off this time" % [p.name, by_id(best).name, best_v])
 		return {}
+	trace("%s decides to lean on %s (value %.2f: their Capabilities, the chance of revenge, its own aggression and grudge)" % [p.name, by_id(best).name, best_v])
 	# Leaning on them: force a trade for a card p is missing and they may well hold - or make them disarm.
 	var x := by_id(best)
 	var need := 0.0
@@ -1271,6 +1375,19 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 	# otherwise a harmless repeat could keep the window open forever.
 	if c.kind == "test" or alive_list().size() < alive_before:
 		_rebuild_war_queue((p.id + 1) % players.size())
+	return true
+
+## Out of turn means at any moment: on your own turn too, before or after your draw or trade, and
+## while a pledged card is due. A test or an attack then is not a move - the draw or trade still
+## follows - and a weapon fired now is the one weapon this turn allows (unless you are a Superpower).
+## c: {kind: "test"|"attack", type?, target?}. Returns true if it happened.
+func can_strike_now(p: Player) -> bool:
+	return not over and p.alive and prompt.is_empty() and cur() == p and (phase == "play" or phase == "honour")
+
+func turn_strike(p: Player, c: Dictionary) -> bool:
+	if not can_strike_now(p) or not _valid_war(p, c):
+		return false
+	apply_war(p, c)
 	return true
 
 ## c: {kind: "pass"|"test"|"attack", type?, target?}
@@ -1553,17 +1670,25 @@ func ai_war_choice(p: Player) -> Dictionary:
 				prob *= 0.6 if prov > 0.3 else 1.0
 				if holds(p, "short"):
 					prob = maxf(prob, 0.7)
-		if rng.randf() < prob:
+		var tests := rng.randf() < prob
+		if tracing:
+			trace("%s can test: %d Capabilities in hand, %s - chance %s%s, %s" % [p.name, cap_count, "others have tested" if any_tested else "nobody has tested", _pc(prob), (", a test would provoke +%s, peril %s" % [_pc(provocation(p, "test")), _pc(peril(p, p))]) if deep(p) else "", "TESTS" if tests else "waits"])
+		if tests:
 			return {"kind": "test"}
 	var best = null
 	var best_score := -9.0
+	var scored: Array = []
 	for o in attack_types(p):
 		var pen: float = {"short": 0.0, "long": 0.02, "super": -0.05}[o.type]      # Superpower strikes are free
 		for tid in o.targets:
 			var s2 := score_nuke(B, p, by_id(tid)) - pen
+			scored.append("%s on %s %.2f" % [o.type, by_id(tid).name, s2])
 			if s2 > best_score:
 				best_score = s2
 				best = {"kind": "attack", "type": o.type, "target": tid}
+	if not scored.is_empty():
+		if tracing:
+			trace("%s weighs striking (fires above 0.35): %s - %s" % [p.name, "; ".join(scored), ("STRIKES %s" % by_id(best.target).name) if best_score > 0.35 else "holds fire"])
 	if best != null and best_score > 0.35:
 		return best
 	if can_threaten(p) and not (deep(p) and pv(p, "peace") >= 0.5):      # peace-lovers do not lean on people
@@ -1583,6 +1708,7 @@ func ai_counter_target(p: Player, by: Player, targets: Array) -> Player:
 		if s > best_s:
 			best_s = s
 			best = t
+	trace("%s counter-strikes %s: the most dangerous or most resented target left (score %.2f)" % [p.name, best.name, best_s])
 	return best
 
 ## How much p would lose by parting with c - wherever c is now (in hand, or already set out in the
@@ -1671,7 +1797,9 @@ func ceasefire_score(p: Player, proposer: Player, by: Player = null) -> float:
 	return s
 
 func _ai_agrees_ceasefire(p: Player, proposer: Player) -> bool:
-	return ceasefire_score(p, proposer) + _noise(p) * 0.25 > 0.5
+	var s := ceasefire_score(p, proposer) + _noise(p) * 0.25
+	trace("%s weighs %s's stand-down: %.2f (agrees above 0.50) - %s" % [p.name, proposer.name, s, "agrees" if s > 0.5 else "refuses"])
+	return s > 0.5
 
 ## An AI's own stance on a stand-down (its score as proposer): used by the debug view.
 func wants_peace(p: Player) -> float:

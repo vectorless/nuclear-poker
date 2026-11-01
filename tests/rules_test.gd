@@ -57,6 +57,16 @@ func _init() -> void:
 	g.perform_attacks([{"p": me, "type": "long", "target": 2}])
 	check(not g.holds(me, "long") and g.holds(me, "short"), "Long range is spent when fired; Short range stays")
 	check(g.attack_types(me).is_empty(), "one weapon per turn")
+	# out of turn means at any moment: on your own turn too, before the draw or trade
+	g = game([tech + ["short", "short", "long"], ["uranium"], ["uranium"], ["uranium"]])
+	me = g.players[0]
+	g.turn = 0
+	g.phase = "play"
+	check(g.turn_strike(me, {"kind": "test"}) and me.tested and g.phase == "play", "on your own turn, before your move: a Nuclear Test, and the turn goes on")
+	check(g.turn_strike(me, {"kind": "attack", "type": "short", "target": 1}) and not g.players[1].alive and g.phase == "play", "and a strike at a neighbour - the draw or trade still follows")
+	check(g.attack_types(me).is_empty() and not g.turn_strike(me, {"kind": "attack", "type": "long", "target": 2}), "but that was the turn's one weapon: no second strike")
+	check(g.play_research(me) and g.phase == "war", "then the move, and the exchange window after it")
+	check(not g.turn_strike(me, {"kind": "attack", "type": "long", "target": 2}) and g.attack_types(me).is_empty(), "in the window too, nothing more to fire this turn")
 	# no attack before a test; disarming needs the test too
 	g = game([["short", "long", "uranium"], ["uranium"], ["uranium"], ["uranium"]])
 	me = g.players[0]

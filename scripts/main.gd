@@ -1494,6 +1494,7 @@ func _start_game() -> void:
 			nm += " " + ["", "II", "III", "IV"][mini(k, 3)]
 		plist.append({"name": nm, "persona": pid})
 	G = NPGame.new()
+	G.tracing = true      # keeps the debug transcript (F9, or the end screen)
 	G.setup({"players": plist})
 	ME = G.players[0]
 	end_shown = false
@@ -1604,7 +1605,7 @@ func _pump() -> void:
 func _on_human_turn(tok: int) -> void:
 	if G.phase == "play":
 		var L := G.legal(ME)
-		if not L.can_research and ME.hand.is_empty():
+		if not L.can_research and ME.hand.is_empty() and L.attacks.is_empty() and not L.can_test:
 			await get_tree().create_timer(0.7 / speed).timeout
 			if tok == pump_token and G != null and G.cur() == ME and G.phase == "play":
 				G.play_skip(ME)
@@ -2363,6 +2364,7 @@ func _classic_actions(bar: HFlowContainer) -> void:
 			_after_human())
 		bar.add_child(rb)
 		btn["renege"] = rb
+		_strike_buttons(bar, L, false)
 	elif G.phase == "play" and G.cur() == ME:
 		var rb2 := _big(_btn("Research", "primary", 30), 76.0)      # your turn's main action fills the box
 		rb2.disabled = not L.can_research
@@ -2378,6 +2380,7 @@ func _classic_actions(bar: HFlowContainer) -> void:
 				_after_human())
 			bar.add_child(sk)
 			btn["skip"] = sk
+		_strike_buttons(bar, L, false)
 	elif G.phase == "war" and _war_peek() == ME.id:
 		var sd := _big(_btn("Stand down", "default", 18), 56.0)
 		sd.pressed.connect(func():
@@ -2385,16 +2388,7 @@ func _classic_actions(bar: HFlowContainer) -> void:
 			_after_human())
 		bar.add_child(sd)
 		btn["stand"] = sd
-		var tb := _big(_btn("Nuclear Test", "default", 18), 56.0)
-		tb.disabled = not L.can_test
-		tb.pressed.connect(_act_test)
-		bar.add_child(tb)
-		btn["test"] = tb
-		var ab := _big(_btn("Attack...", "danger", 18), 56.0)
-		ab.disabled = L.attacks.is_empty()
-		ab.pressed.connect(_attack_modal)
-		bar.add_child(ab)
-		btn["attack"] = ab
+		_strike_buttons(bar, L, true)
 		if L.can_threaten:      # only once you have tested and can reach someone, once a turn
 			var thb := _big(_btn("Threaten...", "danger", 18), 56.0)
 			thb.tooltip_text = "Your declaration for this window. Refused, you may strike at once."
@@ -2402,6 +2396,27 @@ func _classic_actions(bar: HFlowContainer) -> void:
 			bar.add_child(thb)
 			btn["threaten"] = thb
 
+
+## Nuclear Test and Attack: your declarations in the exchange window (always shown there, greyed out
+## when you cannot), and - out of turn means at any moment - on your own turn too, where they appear
+## only when you actually can test or fire, so the turn's own buttons keep the box.
+func _strike_buttons(bar: HFlowContainer, L: Dictionary, always: bool) -> void:
+	if always or L.can_test:
+		var tb := _big(_btn("Nuclear Test", "default", 18), 56.0)
+		tb.disabled = not L.can_test
+		if not always:
+			tb.tooltip_text = "Test now, on your turn. Your draw or trade still follows."
+		tb.pressed.connect(_act_test)
+		bar.add_child(tb)
+		btn["test"] = tb
+	if always or not L.attacks.is_empty():
+		var ab := _big(_btn("Attack...", "danger", 18), 56.0)
+		ab.disabled = L.attacks.is_empty()
+		if not always:
+			ab.tooltip_text = "Strike now, on your turn. Your draw or trade still follows - but this is your one weapon this turn."
+		ab.pressed.connect(_attack_modal)
+		bar.add_child(ab)
+		btn["attack"] = ab
 
 func _render_side() -> void:
 	_clear(map_box)
@@ -2444,14 +2459,20 @@ func _act_research() -> void:
 		snd("click")
 		_after_human()
 
-func _act_test() -> void:
-	G.war_declare(ME, {"kind": "test"})
+## A test or an attack: a declaration in the exchange window, or - at any moment - on your own turn.
+func _declare(c: Dictionary) -> void:
+	if G.phase == "war":
+		G.war_declare(ME, c)
+	else:
+		G.turn_strike(ME, c)
 	_after_human()
+
+func _act_test() -> void:
+	_declare({"kind": "test"})
 
 func _act_launch(type: String, tid: int) -> void:
 	_close_modal()
-	G.war_declare(ME, {"kind": "attack", "type": type, "target": tid})
-	_after_human()
+	_declare({"kind": "attack", "type": type, "target": tid})
 
 func _act_counter(tid: int) -> void:
 	_close_modal(true)
@@ -2935,11 +2956,11 @@ func _card_row(vb: VBoxContainer, keys: Array, notes: Array) -> void:
 	vb.add_child(fl)
 
 func _rules_classic(vb: VBoxContainer) -> void:
-	_rules_p(vb, "Nuclear Poker teaches the logic of nuclear deterrence. There is [b]no victory rule[/b]: the game ends when one power is left standing, when nobody is left, when everyone agrees to stand down, when every power left is a Superpower - [b]Mutually Assured Destruction[/b], and all win - when one Superpower faces powers that hold no Capability at all - [b]hegemony[/b], and it wins - or in a [b]stalemate[/b], when the draw pile is empty and three full rounds pass without anyone testing, striking, trading or disarming. If you are eliminated, the other powers play on without you until the game ends.")
+	_rules_p(vb, "There is [b]no victory rule[/b]. The game ends when one power is left, when nobody is left, when everyone agrees to stand down, when every power left is a Superpower ([b]Mutually Assured Destruction[/b] - all win), when one Superpower faces powers holding no Capability ([b]hegemony[/b] - it wins), or in a [b]stalemate[/b]: draw pile empty and three full rounds without a test, strike, trade or disarmament. The others play on after you are eliminated.")
 	_rules_h(vb, "Goal")
-	_rules_p(vb, "You are a country trying to become a [b]Nuclear Superpower[/b]. First [b]test a nuclear weapon[/b] with the four Technology cards, then collect the four Capability cards.")
+	_rules_p(vb, "Test a nuclear weapon with the four Technology cards, then collect the four Capability cards to become a [b]Nuclear Superpower[/b].")
 	_rules_h(vb, "Technology cards - the Nuclear Test")
-	_rules_p(vb, "Collect all four different Technologies, then put them on the table in the exchange window to show you have tested a warhead. You only need to do this once. You cannot attack before you have tested.")
+	_rules_p(vb, "Hold all four Technologies and put them on the table: your Nuclear Test, once per game. No attacks before it.")
 	_card_row(vb, ["uranium", "refinement", "warhead", "testing"], ["", "", "", ""])
 	_rules_h(vb, "Capability cards - your weapons")
 	_card_row(vb, ["short", "long", "counter", "super"], [
@@ -2948,25 +2969,23 @@ func _rules_classic(vb: VBoxContainer) -> void:
 		"Counter-strike: when you are eliminated, take one player with you (needs Short + Long)",
 		"Superpower: hold all four Capabilities + a test, and strike again and again"])
 	_rules_h(vb, "Set up")
-	_rules_p(vb, "One set of these 8 cards per player, plus one extra set: [b]3 players = 32 cards, 4 players = 40, 5 players = 48[/b]. Everyone is dealt 3 cards and the rest is the draw pile.")
-	_rules_h(vb, "Your turn: one move - draw or trade")
-	_rules_p(vb, "- [b]Research[/b]: draw a card from the draw pile.\n- [b]Trade[/b]: drag a card from your hand onto another player's [b]trade area[/b] to offer it.\n- If the draw pile is empty you can only trade, or skip your turn.")
-	_rules_h(vb, "Trading - and you can be cheated")
-	_rules_p(vb, "- The player you offer a card to [b]sees it[/b] before deciding; nobody else does. The card they answer with stays [b]face down[/b] until it arrives in your hand - and the rest of the table never sees what changed hands.\n- The player you offer to either [b]declines[/b] or [b]answers[/b] with a face-down card of their own. Your offer was your acceptance: if they answer, the deal is done.\n- Your card goes to them [b]at once[/b]. Theirs is only a [b]pledge[/b]: it reaches you on [i]their[/i] next turn, when they choose to [b]deliver[/b] it - or [b]break the deal[/b] and keep it.\n- When someone offers you a trade, drag one of your cards into [i]your own[/i] trade area to answer, or press Decline.\n- An offer is your move for the turn, whether it is answered or declined.\n- The other powers [b]remember[/b]. Break deals and they trust you less, trade with you less, refuse your stand-downs and are quicker to threaten or attack you. Deal honestly, again and again - and above all give partners cards they actually need - and they come to see you as an [b]ally[/b].")
+	_rules_p(vb, "One set of these 8 cards per player, plus one extra set. Everyone is dealt 3 cards; the rest is the draw pile.")
+	_rules_h(vb, "Your turn: draw or trade")
+	_rules_p(vb, "- [b]Research[/b]: draw a card.\n- [b]Trade[/b]: drag a card from your hand onto another player's [b]trade area[/b].\n- Draw pile empty: trade, or skip.")
+	_rules_h(vb, "Trading")
+	_rules_p(vb, "- Only the player you offer to sees your card. They [b]decline[/b], or [b]answer[/b] with a face-down card: then the deal is done.\n- Your card goes to them at once. Theirs is a [b]pledge[/b], delivered on their next turn - or [b]broken[/b] and kept.\n- To answer an offer made to you, drag a card into your own trade area, or press Decline.\n- An offer is your move for the turn.\n- The other powers remember broken deals - and honest ones.")
 	_rules_h(vb, "Nuclear exchanges")
-	_rules_p(vb, "Anyone can test or attack [b]out of turn[/b], declared in [b]order of play[/b]. After every turn, starting with the player who just moved and going clockwise, each player may make a Nuclear Test, attack, threaten - or stand down. After a test or an elimination the round of declarations starts again. You are only asked when you have something to declare.")
+	_rules_p(vb, "After every turn, starting with the player who moved and going clockwise, each player may [b]test[/b], [b]attack[/b], [b]threaten[/b] - or stand down. After a test or an elimination the round starts again. You can also test or attack on your own turn, before or after your move.")
 	_rules_h(vb, "Attacking")
-	_rules_p(vb, "- [b]Short range[/b]: eliminate a player sitting immediately to your left or right.\n- [b]Long range[/b]: eliminate anyone at the table.\n- [b]Counter-strike[/b]: when you are eliminated you immediately eliminate one player of your choice.\n- [b]One weapon per turn[/b]: unless you are a Superpower, you can fire only one attack card in each turn's exchange window.\n- [b]Firing a weapon destroys it[/b]: a Short-range attack uses up your Short-range card, a Long-range attack your Long-range card (Short range stays). Spent weapons go to the set-aside pile. A [b]Superpower[/b] strikes for free, as often as it likes - its Superpower strike reaches anyone, so it is the only weapon it is offered.\n- An attack puts the Capability cards it needs on the table for all to see.\n- The moment a power becomes a [b]Superpower[/b] - tested, with all four Capabilities - its Capabilities go on the table beside its Technologies, for all to see.\n- An eliminated player's hand is turned face up and stays on show in their seat.")
+	_rules_p(vb, "- [b]Short range[/b]: eliminate a neighbour. [b]Long range[/b]: eliminate anyone. [b]Counter-strike[/b]: when eliminated, eliminate one player of your choice.\n- [b]One weapon per turn[/b], and firing destroys it. A [b]Superpower[/b] strikes anyone, as often as it likes, and spends nothing.\n- An attack shows the Capability cards it needs. A Superpower's Capabilities go on the table the moment it becomes one. An eliminated player's hand is turned face up.")
 	_rules_h(vb, "Threats and disarming")
-	_rules_p(vb, "- [b]Threaten...[/b] (in the exchange window, as your declaration; once a turn): name a player you could attack and make one of two demands. [b]Force a trade[/b]: you put up a card of yours; they see it and give you a card of their choice in return, and the two swap at once, face down. [b]Disarm[/b]: they return [b]all their Capability cards[/b] to the deck. Either way they may refuse, and nothing changes hands. If they refuse, you declare again at once: strike, or stand down. If they give in, the round of declarations starts again.\n- [b]Disarm[/b] (top bar): once you have made your [b]Nuclear Test[/b], at [b]any time[/b], on or off your turn, return all your Capability cards to the deck. The other powers may disarm too once they have tested.")
+	_rules_p(vb, "- [b]Threaten...[/b] (exchange window, once a turn): name a player you could attack. [b]Force a trade[/b]: put up a card; they give one back of their choice, swapped at once. [b]Disarm[/b]: they return all Capability cards to the deck. They may refuse; then you declare again at once.\n- [b]Disarm[/b] (top bar): after your Nuclear Test, at any time, return all your Capability cards to the deck.")
 	_rules_h(vb, "Standing down")
-	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game peacefully - but only if every other power agrees. Each weighs its position: can it strike, is it under threat, are you armed, how close is it to a full arsenal, does it trust you. Once refused, you can ask again after a full round, or as soon as something changes on the table.")
-	_rules_h(vb, "Mutually Assured Destruction")
-	_rules_p(vb, "The moment [b]every power still in the game is a Superpower[/b] - holding [b]all eight cards[/b]: the four Technologies tested on the table and all four Capabilities - the game ends in Mutually Assured Destruction: each can destroy all the others, so none will - and [b]all survivors win[/b].")
+	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game if every other power agrees. Refused, ask again after a full round or when something changes.")
 	_rules_h(vb, "The table map")
-	_rules_p(vb, "The map in the side panel shows one country per player, in turn order clockwise round the unclaimed highlands at the heart of the continent. Countries that share a border are neighbours - a [b]solid amber[/b] line joins them and Short range reaches them. A [b]dashed[/b] line crosses the highlands to the countries further away - only Long range reaches them. A small mushroom cloud marks a country that has tested. With 3 players everyone is a neighbour. When someone is eliminated the gap closes, and the players either side of them become neighbours.")
+	_rules_p(vb, "One country per player, in turn order. A [b]solid[/b] line joins neighbours: Short range reaches them. A [b]dashed[/b] line: Long range only. A mushroom cloud marks a tested country. When someone is eliminated, the gap closes.")
 	_rules_h(vb, "The powers")
-	_rules_p(vb, "Each AI power has a character of its own - hawks, deterrers, opportunists, pacifists, peacemakers, schemers - and plays to it: how readily it trades, keeps its word, threatens, strikes or stands down. Which is which, you find out at the table. Some think three levels deep: what they believe, what they think the others think of them, and how each move will be read before they make it. Press [b]F9[/b] to watch them think - but that is cheating.")
+	_rules_p(vb, "Each AI power has traits of its own.")
 
 # ====================================================================== end
 func _finish() -> void:
@@ -3038,8 +3057,43 @@ func _end_buttons(vb: VBoxContainer) -> void:
 		_to_menu())
 	row.add_child(again)
 	row.add_child(chg)
+	row.add_child(_spacer())
+	var tr := _btn("Debug transcript", "default", 13)
+	tr.tooltip_text = "The whole game with the hidden information and the AI's reasoning - to paste for analysis."
+	tr.pressed.connect(_transcript_modal)
+	row.add_child(tr)
 	vb.add_child(row)
 	modal_btns.append({"kind": "again", "button": again})
+
+## The debug transcript: every log line, each turn's hidden state and the AI's reasoning, as text to
+## copy and paste for analysis.
+func _transcript_modal() -> void:
+	if G == null:
+		return
+	if debug_panel != null:
+		_toggle_debug()
+	var text := G.transcript_text()
+	var vb := _open_modal("Debug transcript", false, false, false)
+	_close_btn(vb, "X")
+	vb.add_child(_lbl("Hidden information: every hand, the trust between the powers and what each AI weighed before each move. Copy it and paste it wherever you analyse the game.", 13, C_MUT, null, true))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var cp := _btn("Copy to clipboard", "primary", 14)
+	cp.pressed.connect(func():
+		DisplayServer.clipboard_set(text)
+		_toast("Transcript copied: %d lines." % text.count("\n")))
+	row.add_child(cp)
+	row.add_child(_lbl("%d lines - or select the text below (Ctrl/Cmd+A, Ctrl/Cmd+C)." % text.count("\n"), 12, C_MUT, MONO))
+	vb.add_child(row)
+	var te := TextEdit.new()
+	te.text = text
+	te.editable = false
+	te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	te.add_theme_font_override("font", MONO)
+	te.add_theme_font_size_override("font_size", 11)
+	te.custom_minimum_size = Vector2(0, clampf(get_viewport_rect().size.y * 0.84 - 220.0, 160.0, 520.0))
+	te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_child(te)
 
 ## Mutually Assured Destruction: a special edition of The Atomic Herald. The photograph
 ## (assets/ui/mad/<pic>.jpg, from tools/meshy_mad.py) is picked at random, once per game.
@@ -3241,6 +3295,10 @@ func _build_debug() -> void:
 	var hd := HBoxContainer.new()
 	hd.add_child(_lbl("DEBUG - THE OTHER PLAYERS' VIEW", 20, C_AMBER, HEAD))
 	hd.add_child(_spacer())
+	var tr := _btn("Transcript", "default", 12)
+	tr.tooltip_text = "The game so far, with the hidden information and the AI's reasoning - as text to copy."
+	tr.pressed.connect(_transcript_modal)
+	hd.add_child(tr)
 	hd.add_child(_lbl("F9 or Esc to close  ·  updates live  ·  hidden information!", 12, C_MUT, MONO))
 	vb.add_child(hd)
 	vb.add_child(_lbl("Threat = how likely the AI thinks that player can eliminate it soon (from what it has seen). Trust starts at 60%: above it is goodwill (ally), below it a grudge. Stand-down = its current leaning if that player proposed (yes above 0.50). Trade = rough willingness to answer that player's offer. Thinking characters also show: Sees me = how far it reckons that player trusts it (from the public record); Intent = how inclined it foresees that player is to strike it (fires above 0.35); Agrees = whether it expects that player to accept its stand-down.", 12, C_MUT, null, true))
@@ -3952,6 +4010,9 @@ func _supershots() -> void:
 	await _shot(d + "/14-superpower-flash.png")
 	await get_tree().create_timer(3.0).timeout      # the flash and the toast gone: the plain board
 	await _shot(d + "/14-superpower.png")
+	_transcript_modal()
+	await get_tree().create_timer(0.6).timeout
+	await _shot(d + "/15-transcript.png")
 	print("SUPER SHOTS DONE")
 	get_tree().quit(0)
 

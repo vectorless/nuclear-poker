@@ -22,6 +22,12 @@ the Pacifist, the Peacemaker and the Schemer (what they believe, what they think
 move will be read before they make it; `scripts/engine.gd`, "what the others think"). `tests/persona_test.gd` checks them.
 Press **F9** in a game to see what each AI holds and thinks: hand, persona, how threatened it feels by
 each player, its estimates of their arsenals, trust/alliances, stand-down leaning, and the draw pile.
+**Debug transcript** (on the F9 panel, or the end screen) gives the whole game as text to copy out: every hand and
+the trust between the powers at the start of each turn, the public log, and a `~` line for each AI decision with
+the numbers it weighed.
+
+Tests (`godot --headless --path . -s tests/<name>.gd`): `rules_test`, `trade_test`, `persona_test`, `human_sim`, and
+`sim` (600 AI-vs-AI games, also run by CI).
 
 ## Web / GitHub Pages
 `.github/workflows/pages.yml` runs the simulation, exports, and deploys on every push to `main`.
