@@ -44,6 +44,9 @@ Tests (`godot --headless --path . -s tests/<name>.gd`): `rules_test`, `trade_tes
 - **Godot Engine** and its third-party components: MIT and others. The game's **Licences** screen (main menu) shows
   the full notices, as Godot's licence requires of a shipped build.
 
-## Web / GitHub Pages
+## Web / GitHub Pages / itch.io
 `.github/workflows/pages.yml` runs the tests and the simulation, exports, and deploys on every push to `main`.
+Once GitHub Pages has the build, the same build is pushed to itch.io with butler, as the `html5` channel of
+`vectorless/nuclear-poker`. That step needs a `BUTLER_API_KEY` repository secret holding an itch.io API key
+(itch.io > Settings > API keys; `gh secret set BUTLER_API_KEY -R vectorless/nuclear-poker`) and skips without it.
 Manual export: `godot --headless --export-release "Web" build/web/index.html`.

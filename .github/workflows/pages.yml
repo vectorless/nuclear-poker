@@ -1,4 +1,4 @@
-name: Test and deploy to GitHub Pages
+name: Test and deploy to GitHub Pages and itch.io
 
 on:
   push:
@@ -49,6 +49,13 @@ jobs:
         with:
           path: build/web
 
+      - name: Keep the Web build for itch.io
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+          retention-days: 1
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -58,3 +65,37 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Pushes the same build to itch.io once GitHub Pages has it. Needs the
+  # BUTLER_API_KEY repository secret (an itch.io API key); without it the job
+  # just skips. The itch.io upload is the "html5" channel of
+  # vectorless/nuclear-poker, which must be set to play in the browser.
+  itch:
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+    steps:
+      - name: Check for the itch.io key
+        id: key
+        run: |
+          if [ -n "$BUTLER_API_KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          else echo "No BUTLER_API_KEY secret; skipping the itch.io push."; fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          name: web-build
+          path: build/web
+
+      - name: Install butler
+        if: steps.key.outputs.present == 'true'
+        run: |
+          curl -sSL -o butler.zip "https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default"
+          unzip -q butler.zip butler
+          chmod +x butler
+          ./butler -V
+
+      - name: Push to itch.io
+        if: steps.key.outputs.present == 'true'
+        run: ./butler push build/web vectorless/nuclear-poker:html5 --userversion "${GITHUB_SHA::7}"
