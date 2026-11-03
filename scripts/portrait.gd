@@ -126,6 +126,7 @@ class Glyph extends Control:
 class Spread extends Control:
 	var cw := 108.0
 	var ch := 140.0
+	var max_sliver := 116.0
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_RESIZED:
 			layout()
@@ -134,9 +135,9 @@ class Spread extends Control:
 		var n := cards.size()
 		if n == 0:
 			return
-		var sliver := 116.0
+		var sliver := max_sliver
 		if n > 1:
-			sliver = minf(116.0, (size.x - cw) / float(n - 1))
+			sliver = minf(max_sliver, (size.x - cw) / float(n - 1))
 		for i in range(n):
 			var c: Control = cards[i]
 			c.size = Vector2(cw, ch)
@@ -572,23 +573,28 @@ func _seat(p: NPGame.Player, w: float) -> Control:
 	nmc.add_theme_constant_override("margin_top", 8)
 	nmc.add_child(nm)
 	vb.add_child(nmc)
-	# what the table can see of their cards: the table, and a destroyed power's hand, as icons
-	var shown: Array = []
+	# their cards as a fan: the hand face down, then what the table can see - the table, and a
+	# destroyed power's hand. The fan overlaps to fit the seat.
+	var fan := Spread.new()
+	fan.cw = ICON_W
+	fan.ch = ICON_W * CARD_R
+	fan.max_sliver = ICON_W + 2
+	for c in p.hand:
+		if not c.pub:
+			fan.add_child(_back(ICON_W))
 	for c in p.table:
-		shown.append(c.key)
+		fan.add_child(_card(c.key, ICON_W, not p.alive))
 	for c in p.hand:
 		if c.pub:
-			shown.append(c.key)
-	if not shown.is_empty():
-		var fl := HFlowContainer.new()
-		fl.alignment = FlowContainer.ALIGNMENT_CENTER
-		fl.add_theme_constant_override("h_separation", 2)
-		fl.add_theme_constant_override("v_separation", 2)
-		for k in shown:
-			fl.add_child(_card(k, ICON_W, not p.alive))
+			fan.add_child(_card(c.key, ICON_W, not p.alive))
+	var n := fan.get_child_count()
+	if n > 0:
+		var avail := w - 12
+		fan.custom_minimum_size = Vector2(minf(avail, n * (ICON_W + 2) - 2), fan.ch)
+		fan.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var flc := MarginContainer.new()
 		flc.add_theme_constant_override("margin_top", 6)
-		flc.add_child(fl)
+		flc.add_child(fan)
 		vb.add_child(flc)
 	_ignore(pc)
 	pc.clip_contents = true
@@ -1299,6 +1305,25 @@ func player_sheet(p: NPGame.Player) -> void:
 	tv.add_child(_small(_player_sub(p)))
 	hd.add_child(tv)
 	body.add_child(hd)
+	# their hand, face down: something to look at, and a sense of how much they hold
+	var hidden := 0
+	for c in p.hand:
+		if not c.pub:
+			hidden += 1
+	if hidden > 0:
+		var fan := Spread.new()
+		fan.cw = 80.0
+		fan.ch = 80.0 * CARD_R
+		fan.max_sliver = 88.0
+		fan.custom_minimum_size = Vector2(0, fan.ch)
+		fan.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		fan.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for i in range(hidden):
+			fan.add_child(_back(80.0))
+		var fc := MarginContainer.new()
+		fc.add_theme_constant_override("margin_top", 8)
+		fc.add_child(fan)
+		body.add_child(fc)
 	var shown: Array = []
 	for c in p.table:
 		shown.append(c)
