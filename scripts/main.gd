@@ -46,6 +46,7 @@ var mad_pic := -1      # which front-page photograph the MAD ending shows this g
 var muted := false
 var ff := false
 var fresh := {}
+var war_mark := 0      # where the paper stood when you last had the floor: the window asks you only past news
 var log_shown := 0
 var card_w := 100.0
 var mini_w := 46.0
@@ -1518,6 +1519,7 @@ func _start_game() -> void:
 	G = NPGame.new()
 	G.tracing = true      # keeps the debug transcript (F9, or the end screen)
 	G.setup({"players": plist})
+	war_mark = 0
 	ME = G.players[0]
 	end_shown = false
 	mad_pic = -1
@@ -1597,6 +1599,11 @@ func _pump() -> void:
 	if G == null:
 		return
 	var st := G.status()
+	if st == "human" and _quiet_window():
+		G.war_declare(ME, {"kind": "pass"})
+		war_mark = G.log_entries.size()
+		_pump()
+		return
 	_render()
 	if st == "over":
 		_finish()
@@ -1625,6 +1632,20 @@ func _pump() -> void:
 		return
 	G.step()
 	_pump()
+
+## The exchange window asks you only when there is something to answer: a test, a strike, a death, a
+## broken deal or a disarmament since you last had the floor - or, after your own move, a threat you
+## could make. Any other window you stand down by yourself, instead of saying so after every turn.
+const NOTABLE := ["attack", "death", "test", "broken", "reveal"]
+func _quiet_window() -> bool:
+	if G.phase != "war" or _war_peek() != ME.id or not G.prompt.is_empty():
+		return false
+	if G.turn == ME.id and G.can_threaten(ME):
+		return false
+	for i in range(mini(war_mark, G.log_entries.size()), G.log_entries.size()):
+		if str(G.log_entries[i].tone) in NOTABLE:
+			return false
+	return true
 
 func _on_human_turn(tok: int) -> void:
 	if G.phase == "play":
@@ -2486,6 +2507,8 @@ func _scroll_log() -> void:
 # ====================================================================== actions
 func _after_human() -> void:
 	_close_popup()
+	if G != null:
+		war_mark = G.log_entries.size()
 	_pump()
 
 func _act_research() -> void:
@@ -3039,7 +3062,7 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Trading")
 	_rules_p(vb, "- Only the player you offer to sees your card. They [b]decline[/b], or [b]answer[/b] with a face-down card: then the deal is done.\n- Your card goes to them at once. Theirs is a [b]pledge[/b], delivered on their next turn - or [b]broken[/b] and kept.\n- To answer an offer made to you, drag a card into your own trade area, or press Decline.\n- An offer is your move for the turn.\n- The other powers remember broken deals - and honest ones.")
 	_rules_h(vb, "Nuclear exchanges")
-	_rules_p(vb, "After every turn, starting with the player who moved and going clockwise, each player may [b]test[/b], [b]attack[/b], [b]threaten[/b] - or stand down. After a test or an elimination the round starts again. You can also test or attack on your own turn, before or after your move.")
+	_rules_p(vb, "After every turn, starting with the player who moved and going clockwise, each player may [b]test[/b], [b]attack[/b], [b]threaten[/b] - or stand down. After a test or an elimination the round starts again. You can also test or attack on your own turn, before or after your move.\n- You are asked only when there is news since you last spoke - a test, a strike, an elimination, a broken deal, a disarmament - or after your own move, when you could threaten. Any other window, you stand down by yourself.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a neighbour. [b]Long range[/b]: eliminate anyone. [b]Counter-strike[/b]: when eliminated, eliminate one player of your choice.\n- [b]One weapon per turn[/b], and firing destroys it. A [b]Superpower[/b] strikes anyone, as often as it likes, and spends nothing.\n- An attack shows the Capability cards it needs. A Superpower's Capabilities go on the table the moment it becomes one. An eliminated player's hand is turned face up.")
 	_rules_h(vb, "Threats and disarming")
@@ -4359,6 +4382,14 @@ func _shots() -> void:
 ## The phone layout, screen by screen (/tmp/gshots2/p-*.png): the menu, a quiet turn, a card
 ## lifted, a weapon lifted, the strike sheet, an offer received, a player's sheet, five players,
 ## the paper, a card zoom, the end.
+func _find_all(n: Node, cls: String) -> Array:
+	var out: Array = []
+	if n.is_class(cls):
+		out.append(n)
+	for ch in n.get_children():
+		out.append_array(_find_all(ch, cls))
+	return out
+
 func _portraitshots() -> void:
 	DisplayServer.window_set_size(Vector2i(390, 844))
 	await get_tree().process_frame
@@ -4379,8 +4410,36 @@ func _portraitshots() -> void:
 	await _stage("4", ["uranium", "uranium", "warhead", "short", "long"], false)
 	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/p1-quiet.png")
+	# 1b: the exchange window after a test in it - the caption says a pass hands you your turn; tapping
+	# Stand down must do just that
+	G.turn = 3
+	G.phase = "war"
+	G.war_queue = [0]
+	_render()
+	await get_tree().create_timer(0.3).timeout
+	await _shot(d + "/p1b-window.png")
+	var pill: Control = null
+	for n in _find_all(portrait_ui, "Button"):
+		if n.text == "Stand down":
+			pill = n
+	assert(pill != null, "the window shows Stand down")
+	var pp: Vector2 = pill.get_global_rect().get_center()
+	_mouse(pp, false, false, true)
+	await get_tree().process_frame
+	_mouse(pp, true, true)
+	await get_tree().process_frame
+	_mouse(pp, false, true)
+	for i in range(3):
+		await get_tree().process_frame
+	pump_token += 1
+	print("STAND DOWN: phase=%s turn=%d" % [G.phase, G.turn])
+	assert(G.phase == "play" and G.turn == 0, "standing down hands you your turn")
+	_render()
+	await get_tree().create_timer(0.3).timeout
 	# 2: a card lifted over the table: every power glows, the rest dims
 	var u: Control = hand_card.call("uranium")
+	if u == null:
+		print("DEBUG hand=%s view=%d" % [str(ME.hand.map(func(c): return c.key)), portrait_ui.hand_view.get_child_count()])
 	var from: Vector2 = u.get_global_rect().get_center() + Vector2(-30, 0)
 	var to: Vector2 = seat_of.call(2).get_global_rect().get_center() + Vector2(0, 100)
 	_mouse(from, false, false, true)

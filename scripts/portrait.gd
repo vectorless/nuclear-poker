@@ -30,7 +30,7 @@ const ICON_W := 20.0
 const TABLE_W := 44.0
 const HAND_W := 108.0
 const ZOOM_W := 258.0
-const PILE_W := 88.0
+const PILE_W := 112.0
 const ORDER := ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super"]
 
 var G: NPGame = null
@@ -694,27 +694,27 @@ func _folded_paper() -> Control:
 	var pc := Target.new()
 	pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	pc.custom_minimum_size.y = 115
+	pc.custom_minimum_size.y = 146
 	var tx := _paper_sb(10, 8)
 	pc.add_theme_stylebox_override("panel", tx)
 	pc.tap = paper_sheet
 	var vb := _vbox(3)
 	vb.alignment = BoxContainer.ALIGNMENT_BEGIN
 	pc.add_child(vb)
-	var mast := _lbl("The Atomic Herald", 20, INK, fonts.mast)
+	var mast := _lbl("The Atomic Herald", 24, INK, fonts.mast)
 	mast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mast.clip_text = true
 	vb.add_child(mast)
 	vb.add_child(_rule(INK, 2))
-	var dl := _lbl("LATE EDITION · ROUND %d" % G.round_no, 10, INK, fonts.paper)
+	var dl := _lbl("LATE EDITION · ROUND %d" % G.round_no, 12, INK, fonts.paper)
 	dl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(dl)
 	vb.add_child(_rule(INK, 1))
 	var hl := _headline()
-	var hd := _lbl(str(hl.text), 14, hl.color, fonts.paperb, true)
+	var hd := _lbl(str(hl.text), 18, hl.color, fonts.paperb, true)
 	hd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hd.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	hd.max_lines_visible = 2
+	hd.max_lines_visible = 3
 	hd.custom_minimum_size.x = 120
 	var hdc := MarginContainer.new()
 	hdc.add_theme_constant_override("margin_top", 3)
@@ -765,10 +765,16 @@ func _band_me() -> Control:
 		col.add_child(tz)
 	var pill := _moment_button()
 	if pill != null:
-		var pr := _hbox(0)
+		var pr := _vbox(6)
 		pr.alignment = BoxContainer.ALIGNMENT_CENTER
 		pr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pr.set_meta("dimmable", true)
+		if _war_me():      # the window is a question; say what it asks, and that your turn follows
+			var cap := _small(_window_caption(), C_MUT, 11)
+			cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			cap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			pr.add_child(cap)
 		pr.add_child(pill)
 		col.add_child(pr)
 	col.add_child(_hand())
@@ -918,6 +924,20 @@ func _moment_button() -> Control:
 			M._after_human())
 		return sk
 	return null
+
+## What the exchange window asks of you, and what comes after a pass.
+func _window_caption() -> String:
+	var verbs: Array = []
+	if _any_strike():
+		verbs.append("strike")
+	if _can_test():
+		verbs.append("test")
+	if G.can_threaten(ME) and not G.threat_targets(ME).is_empty():
+		verbs.append("threaten")
+	var after := "your turn follows" if G.turn != ME.id else "the next turn follows"
+	if verbs.is_empty():
+		return "Exchange window: nothing to declare - stand down, and " + after
+	return "Exchange window: " + " or ".join(verbs) + " now, or stand down - " + after
 
 func _hand() -> Control:
 	var hv := Spread.new()
