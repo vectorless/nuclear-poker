@@ -31,6 +31,7 @@ const TABLE_W := 44.0
 const HAND_W := 108.0
 const ZOOM_W := 258.0
 const PILE_W := 112.0
+const MENU_H := 44.0 + 8.0      # the ... button at the very top and the gap under it
 const ORDER := ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super"]
 
 var G: NPGame = null
@@ -498,14 +499,35 @@ func _build_board() -> Control:
 	bands.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bands.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(bands)
-	# the paper and the pile at the top, the seats below them: a card lifted from the hand has less far
-	# to travel to a seat
+	# the ... button in the top corner, the paper and the pile under it, the seats below them: a card
+	# lifted from the hand has less far to travel to a seat
 	var h1 := 128.0 + 16.0
-	var h2 := top_pad + (200.0 if vp.y >= 820.0 else maxf(150.0, vp.y * 0.24))
+	var h2 := top_pad + MENU_H + maxf(146.0, PILE_W * CARD_R) + 8.0
 	bands.add_child(_band_table(h2))
 	bands.add_child(_band_seats(h1))
 	bands.add_child(_band_me())
+	var menu := _menu_button()
+	menu.position = Vector2(vp.x - 16 - 44, top_pad)
+	root.add_child(menu)
 	return root
+
+## The ... button: 44 square, in the top right corner, over the table band.
+func _menu_button() -> Button:
+	var menu := Button.new()
+	menu.focus_mode = Control.FOCUS_NONE
+	menu.custom_minimum_size = Vector2(44, 44)
+	for st in ["normal", "hover", "pressed"]:
+		menu.add_theme_stylebox_override(st, _sb(C_PANEL2 if st != "pressed" else C_PANEL2.lightened(0.1), C_LINE, 1, 8, 0))
+	menu.pressed.connect(menu_sheet)
+	var dots := Control.new()
+	dots.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dots.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dots.draw.connect(func():
+		for k in range(3):
+			dots.draw_circle(Vector2(11 + k * 11, 22), 2.5, C_INK))
+	menu.add_child(dots)
+	menu.set_meta("dimmable", true)
+	return menu
 
 ## Band two: the other powers, in turn order, every seat the same height.
 func _band_seats(h: float) -> Control:
@@ -626,7 +648,7 @@ func _band_table(h: float) -> Control:
 	var mc := MarginContainer.new()
 	mc.custom_minimum_size.y = h
 	mc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mc.add_theme_constant_override("margin_top", int(top_pad))
+	mc.add_theme_constant_override("margin_top", int(top_pad + MENU_H))
 	mc.add_theme_constant_override("margin_left", 16)
 	mc.add_theme_constant_override("margin_right", 16)
 	var row := _hbox(12)
@@ -731,28 +753,12 @@ func _folded_paper() -> Control:
 	_ignore(pc)
 	return pc
 
-## Band three: you. The menu button, your table and trade area while they hold a card, the one
-## button of the moment, and the hand along the bottom.
+## Band three: you. Your table and trade area while they hold a card, the one button of the
+## moment, and the hand along the bottom.
 func _band_me() -> Control:
 	var root := Control.new()
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var menu := Button.new()
-	menu.focus_mode = Control.FOCUS_NONE
-	menu.custom_minimum_size = Vector2(44, 44)
-	for st in ["normal", "hover", "pressed"]:
-		menu.add_theme_stylebox_override(st, _sb(C_PANEL2 if st != "pressed" else C_PANEL2.lightened(0.1), C_LINE, 1, 8, 0))
-	menu.pressed.connect(menu_sheet)
-	var dots := Control.new()
-	dots.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	dots.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	dots.draw.connect(func():
-		for k in range(3):
-			dots.draw_circle(Vector2(11 + k * 11, 22), 2.5, C_INK))
-	menu.add_child(dots)
-	menu.position = Vector2(get_viewport_rect().size.x - 16 - 44, 8)
-	menu.set_meta("dimmable", true)
-	root.add_child(menu)
 	var col := _vbox(12)
 	col.alignment = BoxContainer.ALIGNMENT_END
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
