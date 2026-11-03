@@ -444,6 +444,10 @@ func _strike_ok(type: String, p: NPGame.Player) -> bool:
 			return true
 	return false
 
+## A threat, like a strike, on your own turn or when the window asks you - once a turn.
+func _can_threaten() -> bool:
+	return (_war_me() or G.can_strike_now(ME)) and G.can_threaten(ME)
+
 func _any_strike() -> bool:
 	return (_war_me() or G.can_strike_now(ME)) and not G.attack_types(ME).is_empty()
 
@@ -946,7 +950,7 @@ func _action_buttons() -> Array:
 		var sb := _pbtn("Strike...", "danger", true)
 		sb.pressed.connect(strike_pick_sheet)
 		out.append(sb)
-	if _war_me() and G.can_threaten(ME):
+	if _can_threaten():
 		var tb := _pbtn("Threaten...", "caution", true)
 		tb.pressed.connect(threaten_pick_sheet)
 		out.append(tb)
@@ -959,7 +963,7 @@ func _window_caption() -> String:
 		verbs.append("strike")
 	if _can_test():
 		verbs.append("test")
-	if G.can_threaten(ME) and not G.threat_targets(ME).is_empty():
+	if _can_threaten():
 		verbs.append("threaten")
 	var after := "your turn follows" if G.turn != ME.id else "the next turn follows"
 	if verbs.is_empty():
@@ -1286,7 +1290,7 @@ func strike_sheet(p: NPGame.Player, c: Dictionary, w: String) -> void:
 
 ## The two threats against p, when you may make one now.
 func _threat_buttons(bb: Control, p: NPGame.Player) -> void:
-	if not (_war_me() and G.can_threaten(ME) and G.threat_targets(ME).has(p.id)):
+	if not (_can_threaten() and G.threat_targets(ME).has(p.id)):
 		return
 	if not ME.hand.is_empty() and not p.hand.is_empty():
 		var tt := _pbtn("Threaten: trade with me", "caution")
@@ -1295,8 +1299,7 @@ func _threat_buttons(bb: Control, p: NPGame.Player) -> void:
 	var td := _pbtn("Threaten: disarm", "caution")
 	td.pressed.connect(func():
 		close_sheet()
-		G.war_declare(ME, {"kind": "threat", "target": p.id})
-		M._after_human())
+		M._declare({"kind": "threat", "target": p.id}))
 	bb.add_child(td)
 
 ## A player as a button: photo and name, for the sheets that ask you to pick one.
@@ -1354,7 +1357,7 @@ func strike_pick_sheet() -> void:
 
 ## Threaten: who you could strike, so the threat is credible. Tapping a power asks which threat.
 func threaten_pick_sheet() -> void:
-	var body := sheet_open("Threaten", "Once a turn, in the exchange window")
+	var body := sheet_open("Threaten", "Once a turn")
 	body.add_child(_lbl("Name a power you could strike. Refused, you may strike at once.", 13, C_MUT, fonts.body, true))
 	for tid in G.threat_targets(ME):
 		var p: NPGame.Player = G.players[int(tid)]
@@ -1388,8 +1391,7 @@ func pick_card_sheet(p: NPGame.Player) -> void:
 		var cid: int = c.id
 		fl.add_child(_tap_card(c.key, 80, func():
 			close_sheet()
-			G.war_declare(ME, {"kind": "demand", "target": p.id, "offer": cid})
-			M._after_human()))
+			M._declare({"kind": "demand", "target": p.id, "offer": cid})))
 	body.add_child(fl)
 	var bb := _sheet_buttons(body)
 	var cancel := _pbtn("Cancel", "quiet")

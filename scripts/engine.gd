@@ -1314,8 +1314,8 @@ func _valid_threat(p: Player, c: Dictionary) -> bool:
 			and not by_id(int(c.target)).hand.is_empty()
 	return c.kind == "threat" and threat_targets(p).has(int(c.get("target", -1)))
 
-## A threat is a declaration in the exchange window, like a test or an attack: one per player per
-## turn. Refused, the threatener declares once more at once - free to carry the threat out. Given in
+## A threat is a declaration in the exchange window - or on your own turn - like a test or an attack:
+## one per player per turn. Refused, the threatener declares once more at once - free to carry the threat out. Given in
 ## to, the round of declarations starts again, as after a test.
 func can_threaten(p: Player) -> bool:
 	return p.alive and int(last_threat.get(p.id, -1)) != turn_no and not threat_targets(p).is_empty()
@@ -1383,6 +1383,14 @@ func war_declare(p: Player, c: Dictionary) -> bool:
 ## c: {kind: "test"|"attack", type?, target?}. Returns true if it happened.
 func can_strike_now(p: Player) -> bool:
 	return not over and p.alive and prompt.is_empty() and cur() == p and (phase == "play" or phase == "honour")
+
+## A threat on your own turn, like a strike: not a move. Refused, your turn goes on and you may
+## strike at once; given in to, likewise - the window after your move asks no one again for it.
+func turn_threat(p: Player, c: Dictionary) -> bool:
+	if not can_strike_now(p) or not can_threaten(p) or not _valid_threat(p, c):
+		return false
+	_declare_threat(p, c)
+	return true
 
 func turn_strike(p: Player, c: Dictionary) -> bool:
 	if not can_strike_now(p) or not _valid_war(p, c):

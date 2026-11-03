@@ -1638,13 +1638,12 @@ func _pump() -> void:
 	_pump()
 
 ## The exchange window asks you only when there is something to answer: a test, a strike, a death, a
-## broken deal or a disarmament since you last had the floor - or, after your own move, a threat you
-## could make. Any other window you stand down by yourself, instead of saying so after every turn.
+## broken deal or a disarmament since you last had the floor. Any other window you stand down by
+## yourself, instead of saying so after every turn: a strike or a threat of your own has its place on
+## your turn.
 const NOTABLE := ["attack", "death", "test", "broken", "reveal"]
 func _quiet_window() -> bool:
 	if G.phase != "war" or _war_peek() != ME.id or not G.prompt.is_empty():
-		return false
-	if G.turn == ME.id and G.can_threaten(ME):
 		return false
 	for i in range(mini(war_mark, G.log_entries.size()), G.log_entries.size()):
 		if str(G.log_entries[i].tone) in NOTABLE:
@@ -2440,6 +2439,12 @@ func _classic_actions(bar: HFlowContainer) -> void:
 			bar.add_child(sk)
 			btn["skip"] = sk
 		_strike_buttons(bar, L, false)
+		if L.can_threaten and G.can_strike_now(ME):
+			var thb0 := _big(_btn("Threaten...", "danger", 18), 56.0)
+			thb0.tooltip_text = "Once a turn. Refused, you may strike at once."
+			thb0.pressed.connect(_threaten_modal)
+			bar.add_child(thb0)
+			btn["threaten"] = thb0
 	elif G.phase == "war" and _war_peek() == ME.id:
 		var sd := _big(_btn("Stand down", "default", 18), 56.0)
 		sd.pressed.connect(func():
@@ -2524,6 +2529,8 @@ func _act_research() -> void:
 func _declare(c: Dictionary) -> void:
 	if G.phase == "war":
 		G.war_declare(ME, c)
+	elif c.kind == "threat" or c.kind == "demand":
+		G.turn_threat(ME, c)
 	else:
 		G.turn_strike(ME, c)
 	_after_human()
@@ -2877,8 +2884,7 @@ func _threaten_modal() -> void:
 					_force_trade_modal(tid)
 					return
 				_close_modal()
-				G.war_declare(ME, {"kind": kind, "target": tid})
-				_after_human())
+				_declare({"kind": kind, "target": tid}))
 			fl.add_child(b)
 			modal_btns.append({"kind": "threaten", "button": b})
 
@@ -2908,8 +2914,7 @@ func _force_trade_modal(tid: int) -> void:
 	vb.add_child(_rtl("Which card do you put up? [b]%s[/b] sees it, then gives you a card of their choice in return - or refuses, and you keep it." % G.players[tid].name, 15, Color("#ddd3b4")))
 	_hand_picker(vb, "Offer", "threaten", func(cid):
 		_close_modal()
-		G.war_declare(ME, {"kind": "demand", "target": tid, "offer": cid})
-		_after_human())
+		_declare({"kind": "demand", "target": tid, "offer": cid}))
 
 ## You are threatened with a forced trade: choose the card you give back - or refuse.
 func _demand_modal() -> void:
@@ -3066,11 +3071,11 @@ func _rules_classic(vb: VBoxContainer) -> void:
 	_rules_h(vb, "Trading")
 	_rules_p(vb, "- Only the player you offer to sees your card. They [b]decline[/b], or [b]answer[/b] with a face-down card: then the deal is done.\n- Your card goes to them at once. Theirs is a [b]pledge[/b], delivered on their next turn - or [b]broken[/b] and kept.\n- To answer an offer made to you, drag a card into your own trade area, or press Decline.\n- An offer is your move for the turn.\n- The other powers remember broken deals - and honest ones.")
 	_rules_h(vb, "Nuclear exchanges")
-	_rules_p(vb, "After every turn, starting with the player who moved and going clockwise, each player may [b]test[/b], [b]attack[/b], [b]threaten[/b] - or stand down. After a test or an elimination the round starts again. You can also test or attack on your own turn, before or after your move.\n- You are asked only when there is news since you last spoke - a test, a strike, an elimination, a broken deal, a disarmament - or after your own move, when you could threaten. Any other window, you stand down by yourself.")
+	_rules_p(vb, "After every turn, starting with the player who moved and going clockwise, each player may [b]test[/b], [b]attack[/b], [b]threaten[/b] - or stand down. After a test or an elimination the round starts again. You can also test or attack on your own turn, before or after your move.\n- You are asked only when there is news since you last spoke - a test, a strike, an elimination, a broken deal, a disarmament. Any other window, you stand down by yourself.")
 	_rules_h(vb, "Attacking")
 	_rules_p(vb, "- [b]Short range[/b]: eliminate a neighbour. [b]Long range[/b]: eliminate anyone. [b]Counter-strike[/b]: when eliminated, eliminate one player of your choice.\n- [b]One weapon per turn[/b], and firing destroys it. A [b]Superpower[/b] strikes anyone, as often as it likes, and spends nothing.\n- An attack shows the Capability cards it needs. A Superpower's Capabilities go on the table the moment it becomes one. An eliminated player's hand is turned face up.")
 	_rules_h(vb, "Threats and disarming")
-	_rules_p(vb, "- [b]Threaten...[/b] (exchange window, once a turn): name a player you could attack. [b]Force a trade[/b]: put up a card; they give one back of their choice, swapped at once. [b]Disarm[/b]: they return all Capability cards to the deck. They may refuse; then you declare again at once.\n- [b]Disarm[/b] (top bar): after your Nuclear Test, at any time, return all your Capability cards to the deck.")
+	_rules_p(vb, "- [b]Threaten...[/b] (on your turn or in the exchange window, once a turn): name a player you could attack. [b]Force a trade[/b]: put up a card; they give one back of their choice, swapped at once. [b]Disarm[/b]: they return all Capability cards to the deck. They may refuse; then you declare again at once.\n- [b]Disarm[/b] (top bar): after your Nuclear Test, at any time, return all your Capability cards to the deck.")
 	_rules_h(vb, "Standing down")
 	_rules_p(vb, "[b]Propose stand-down[/b] (top bar) ends the game if every other power agrees. Refused, ask again after a full round or when something changes.")
 	_rules_h(vb, "The table map")
@@ -3746,6 +3751,8 @@ func _stage(np: String, mine: Array, tested: bool) -> void:
 	_start_game()
 	speed = 1.0
 	pump_token += 1
+	G.deck.append_array(ME.hand)      # your hand is exactly the list: a dealt Superpower card would spoil the stage
+	ME.hand.clear()
 	for k in mine:
 		var c = _stage_take(k)
 		if c != null:
@@ -4452,8 +4459,6 @@ func _portraitshots() -> void:
 	await get_tree().create_timer(0.3).timeout
 	# 2: a card lifted over the table: every power glows, the rest dims
 	var u: Control = hand_card.call("uranium")
-	if u == null:
-		print("DEBUG hand=%s view=%d" % [str(ME.hand.map(func(c): return c.key)), portrait_ui.hand_view.get_child_count()])
 	var from: Vector2 = u.get_global_rect().get_center() + Vector2(-30, 0)
 	var to: Vector2 = seat_of.call(2).get_global_rect().get_center() + Vector2(0, 100)
 	_mouse(from, false, false, true)
@@ -4492,6 +4497,12 @@ func _portraitshots() -> void:
 	await _stage("4", ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super"], true)
 	await get_tree().create_timer(0.3).timeout
 	assert(G.is_superpower(ME), "staged as a Superpower")
+	var turn_btns: Array = []
+	for n in _find_all(portrait_ui, "Button"):
+		if n.text in ["Strike...", "Threaten..."]:
+			turn_btns.append(n.text)
+	print("SUPER TURN BUTTONS: %s" % str(turn_btns))
+	assert(turn_btns.size() == 2, "a Superpower's own turn offers Strike and Threaten")
 	await _shot(d + "/p4b-super.png")
 	portrait_ui.strike_pick_sheet()
 	await get_tree().create_timer(0.5).timeout
