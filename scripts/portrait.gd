@@ -494,19 +494,21 @@ func _build_board() -> Control:
 	bands.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bands.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(bands)
-	var h1 := top_pad + 128.0 + 8.0
-	var h2 := 224.0 if vp.y >= 820.0 else maxf(150.0, vp.y * 0.26)
-	bands.add_child(_band_seats(h1))
+	# the paper and the pile at the top, the seats below them: a card lifted from the hand has less far
+	# to travel to a seat
+	var h1 := 128.0 + 16.0
+	var h2 := top_pad + (200.0 if vp.y >= 820.0 else maxf(150.0, vp.y * 0.24))
 	bands.add_child(_band_table(h2))
+	bands.add_child(_band_seats(h1))
 	bands.add_child(_band_me())
 	return root
 
-## Band one: the other powers, in turn order, every seat the same height.
+## Band two: the other powers, in turn order, every seat the same height.
 func _band_seats(h: float) -> Control:
 	var mc := MarginContainer.new()
 	mc.custom_minimum_size.y = h
 	mc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mc.add_theme_constant_override("margin_top", int(top_pad))
+	mc.add_theme_constant_override("margin_top", 8)
 	mc.add_theme_constant_override("margin_left", 16)
 	mc.add_theme_constant_override("margin_right", 16)
 	mc.add_theme_constant_override("margin_bottom", 8)
@@ -615,11 +617,12 @@ func _state_glyph(p: NPGame.Player) -> String:
 		return "disarmed"
 	return ""
 
-## Band two: the draw pile (tap it to research), the cards set aside, and the folded paper.
+## Band one: the draw pile (tap it to research), the cards set aside, and the folded paper.
 func _band_table(h: float) -> Control:
 	var mc := MarginContainer.new()
 	mc.custom_minimum_size.y = h
 	mc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mc.add_theme_constant_override("margin_top", int(top_pad))
 	mc.add_theme_constant_override("margin_left", 16)
 	mc.add_theme_constant_override("margin_right", 16)
 	var row := _hbox(12)
