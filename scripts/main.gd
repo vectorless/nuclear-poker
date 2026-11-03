@@ -3378,12 +3378,16 @@ func _shake() -> void:
 
 func _toast(msg: String) -> void:
 	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _sb(C_BG2, C_AMBER, 1, 99, 10))
-	pc.add_child(_lbl(msg, 14))
+	pc.add_theme_stylebox_override("panel", _sb(C_BG2, C_AMBER, 1, 99 if not portrait else 14, 10))
+	var l := _lbl(msg, 14)
+	if portrait:      # a phone is narrow: the toast wraps, and sits above the hand
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size.x = get_viewport_rect().size.x - 64
+	pc.add_child(l)
 	fx_root.add_child(pc)
 	await get_tree().process_frame
 	var vp := get_viewport_rect().size
-	pc.position = Vector2((vp.x - pc.size.x) / 2.0, vp.y - 70.0)
+	pc.position = Vector2((vp.x - pc.size.x) / 2.0, vp.y - 70.0 if not portrait else vp.y * 0.5 - pc.size.y / 2.0)
 	var tw := pc.create_tween()
 	tw.tween_interval(2.2)
 	tw.tween_property(pc, "modulate:a", 0.0, 0.4)
@@ -4423,14 +4427,17 @@ func _portraitshots() -> void:
 		if n.text == "Stand down":
 			pill = n
 	assert(pill != null, "the window shows Stand down")
-	var pp: Vector2 = pill.get_global_rect().get_center()
-	_mouse(pp, false, false, true)
-	await get_tree().process_frame
-	_mouse(pp, true, true)
-	await get_tree().process_frame
-	_mouse(pp, false, true)
-	for i in range(3):
+	for attempt in range(2):      # synthetic taps occasionally miss a frame; the game itself is not in question
+		if G.phase != "war":
+			break
+		var pp: Vector2 = pill.get_global_rect().get_center()
+		_mouse(pp, false, false, true)
 		await get_tree().process_frame
+		_mouse(pp, true, true)
+		await get_tree().process_frame
+		_mouse(pp, false, true)
+		for i in range(3):
+			await get_tree().process_frame
 	pump_token += 1
 	print("STAND DOWN: phase=%s turn=%d" % [G.phase, G.turn])
 	assert(G.phase == "play" and G.turn == 0, "standing down hands you your turn")
@@ -4473,6 +4480,31 @@ func _portraitshots() -> void:
 	await _shot(d + "/p4-strike-sheet.png")
 	portrait_ui.close_sheet()
 	await get_tree().create_timer(0.3).timeout
+	# 4b: a Superpower on its turn: Strike... beside the hand; the sheet lists who it reaches; and in
+	# its own window, Threaten... too
+	await _stage("4", ["uranium", "refinement", "warhead", "testing", "short", "long", "counter", "super"], true)
+	await get_tree().create_timer(0.3).timeout
+	assert(G.is_superpower(ME), "staged as a Superpower")
+	await _shot(d + "/p4b-super.png")
+	portrait_ui.strike_pick_sheet()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/p4c-strike-pick.png")
+	portrait_ui.close_sheet()
+	G.phase = "war"
+	G.war_queue = [0]
+	_render()
+	await get_tree().create_timer(0.3).timeout
+	var names: Array = []
+	for n in _find_all(portrait_ui, "Button"):
+		if n.text in ["Strike...", "Threaten...", "Stand down"]:
+			names.append(n.text)
+	print("SUPER WINDOW BUTTONS: %s" % str(names))
+	assert(names.size() == 3, "a Superpower's window offers Strike, Threaten and Stand down")
+	await _shot(d + "/p4d-super-window.png")
+	portrait_ui.threaten_pick_sheet()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/p4e-threaten-pick.png")
+	portrait_ui.close_sheet()
 	# 5: an offer received
 	await _stage("4", ["uranium", "uranium", "warhead", "short", "long"], false)
 	G.turn = 1

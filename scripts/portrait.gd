@@ -763,8 +763,11 @@ func _band_me() -> Control:
 	var tz := _trade_area()
 	if tz != null:
 		col.add_child(tz)
+	var pills: Array = _action_buttons()
 	var pill := _moment_button()
 	if pill != null:
+		pills.append(pill)
+	if not pills.is_empty():
 		var pr := _vbox(6)
 		pr.alignment = BoxContainer.ALIGNMENT_CENTER
 		pr.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -775,7 +778,14 @@ func _band_me() -> Control:
 			cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			cap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			pr.add_child(cap)
-		pr.add_child(pill)
+		var fl := HFlowContainer.new()
+		fl.alignment = FlowContainer.ALIGNMENT_CENTER
+		fl.add_theme_constant_override("h_separation", 8)
+		fl.add_theme_constant_override("v_separation", 8)
+		fl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		for b in pills:
+			fl.add_child(b)
+		pr.add_child(fl)
 		col.add_child(pr)
 	col.add_child(_hand())
 	return root
@@ -924,6 +934,20 @@ func _moment_button() -> Control:
 			M._after_human())
 		return sk
 	return null
+
+## Strike and Threaten as buttons, for whoever would rather not drag - and for a Superpower, whose
+## weapon lies on the table rather than in the hand. Each opens a sheet to pick the target.
+func _action_buttons() -> Array:
+	var out: Array = []
+	if _any_strike():
+		var sb := _pbtn("Strike...", "danger", true)
+		sb.pressed.connect(strike_pick_sheet)
+		out.append(sb)
+	if _war_me() and G.can_threaten(ME):
+		var tb := _pbtn("Threaten...", "caution", true)
+		tb.pressed.connect(threaten_pick_sheet)
+		out.append(tb)
+	return out
 
 ## What the exchange window asks of you, and what comes after a pass.
 func _window_caption() -> String:
@@ -1246,23 +1270,104 @@ func strike_sheet(p: NPGame.Player, c: Dictionary, w: String) -> void:
 		close_sheet()
 		M._declare({"kind": "attack", "type": w, "target": p.id}))
 	bb.add_child(sb)
-	if _war_me() and G.can_threaten(ME) and G.threat_targets(ME).has(p.id):
-		if not ME.hand.is_empty() and not p.hand.is_empty():
-			var tt := _pbtn("Threaten: trade with me", "caution")
-			tt.pressed.connect(func(): pick_card_sheet(p))
-			bb.add_child(tt)
-		var td := _pbtn("Threaten: disarm", "caution")
-		td.pressed.connect(func():
-			close_sheet()
-			G.war_declare(ME, {"kind": "threat", "target": p.id})
-			M._after_human())
-		bb.add_child(td)
+	_threat_buttons(bb, p)
 	if _can_offer() and ME.hand.has(c):
 		var of := _pbtn("Offer it in a trade instead", "neutral")
 		of.pressed.connect(func():
 			close_sheet()
 			M._drop_offer(p, {"cid": c.id}))
 		bb.add_child(of)
+	var cancel := _pbtn("Cancel", "quiet")
+	cancel.pressed.connect(close_sheet)
+	bb.add_child(cancel)
+
+## The two threats against p, when you may make one now.
+func _threat_buttons(bb: Control, p: NPGame.Player) -> void:
+	if not (_war_me() and G.can_threaten(ME) and G.threat_targets(ME).has(p.id)):
+		return
+	if not ME.hand.is_empty() and not p.hand.is_empty():
+		var tt := _pbtn("Threaten: trade with me", "caution")
+		tt.pressed.connect(func(): pick_card_sheet(p))
+		bb.add_child(tt)
+	var td := _pbtn("Threaten: disarm", "caution")
+	td.pressed.connect(func():
+		close_sheet()
+		G.war_declare(ME, {"kind": "threat", "target": p.id})
+		M._after_human())
+	bb.add_child(td)
+
+## A player as a button: photo and name, for the sheets that ask you to pick one.
+func _player_btn(p: NPGame.Player, on_tap: Callable) -> Button:
+	var b := _pbtn("", "neutral")
+	b.custom_minimum_size.y = 60
+	var row := _hbox(12)
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ph := _photo(p, 44, 6)
+	ph.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(ph)
+	var tv := _vbox(1)
+	tv.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tv.add_child(_head(p.name, 15))
+	tv.add_child(_small(_player_sub(p), C_MUT, 10))
+	row.add_child(tv)
+	var mc := MarginContainer.new()
+	mc.add_theme_constant_override("margin_left", 8)
+	mc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	mc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mc.add_child(row)
+	b.add_child(mc)
+	_ignore(b)
+	b.pressed.connect(on_tap)
+	return b
+
+## Strike: each weapon you can fire now, and who it reaches. Tapping a power opens the strike sheet.
+func strike_pick_sheet() -> void:
+	var body := sheet_open("Strike", "Who, and with what")
+	for av in G.attack_types(ME):
+		var w: String = av.type
+		var c := {}
+		for x in (ME.table if w == "super" else ME.hand):
+			if x.key == w:
+				c = x
+				break
+		if c.is_empty():
+			continue
+		var hd := _small("Superpower strike" if w == "super" else NPGame.INFO[w].name, C_AMBER, 11)
+		var hc := MarginContainer.new()
+		hc.add_theme_constant_override("margin_top", 10)
+		hc.add_child(hd)
+		body.add_child(hc)
+		for tid in av.targets:
+			var p: NPGame.Player = G.players[int(tid)]
+			var cc := c
+			body.add_child(_player_btn(p, func():
+				close_sheet()
+				strike_sheet(p, cc, w)))
+	var bb := _sheet_buttons(body)
+	var cancel := _pbtn("Cancel", "quiet")
+	cancel.pressed.connect(close_sheet)
+	bb.add_child(cancel)
+
+## Threaten: who you could strike, so the threat is credible. Tapping a power asks which threat.
+func threaten_pick_sheet() -> void:
+	var body := sheet_open("Threaten", "Once a turn, in the exchange window")
+	body.add_child(_lbl("Name a power you could strike. Refused, you may strike at once.", 13, C_MUT, fonts.body, true))
+	for tid in G.threat_targets(ME):
+		var p: NPGame.Player = G.players[int(tid)]
+		body.add_child(_player_btn(p, func():
+			close_sheet()
+			threat_sheet_for(p)))
+	var bb := _sheet_buttons(body)
+	var cancel := _pbtn("Cancel", "quiet")
+	cancel.pressed.connect(close_sheet)
+	bb.add_child(cancel)
+
+func threat_sheet_for(p: NPGame.Player) -> void:
+	var body := sheet_open(p.name, _player_sub(p))
+	body.add_child(_lbl("Force a trade: you put up a card, they give one back of their choice. Disarm: they return every Capability card to the deck. Either way they may refuse - then you declare again at once.", 13, C_MUT, fonts.body, true))
+	var bb := _sheet_buttons(body)
+	_threat_buttons(bb, p)
 	var cancel := _pbtn("Cancel", "quiet")
 	cancel.pressed.connect(close_sheet)
 	bb.add_child(cancel)
