@@ -1156,10 +1156,14 @@ func _tension() -> int:
 				lv = maxi(lv, 2)
 	return lv
 
+## A game is on screen, in either layout: the music and the funeral march play only then.
+func _table_shown() -> bool:
+	return G != null and (game_root.visible or (portrait and portrait_ui != null and portrait_ui.visible))
+
 func _music_update() -> void:
 	if music.is_empty() or DisplayServer.get_name() == "headless":
 		return
-	var playing: bool = G != null and game_root.visible and music_on and not muted
+	var playing: bool = _table_shown() and music_on and not muted
 	if not playing:
 		for p in music:
 			p.stop()
@@ -1211,7 +1215,7 @@ func _lament() -> void:
 	if funeral == null or funeral.playing or not music_on:
 		return
 	await get_tree().create_timer(4.0).timeout
-	if muted or funeral.playing or G == null or not game_root.visible:
+	if muted or funeral.playing or not _table_shown():
 		return
 	for p in music:
 		create_tween().tween_property(p, "volume_db", -80.0, 2.0)
@@ -3725,7 +3729,8 @@ func _autotest() -> void:
 func _stage_take(key: String):
 	var pools: Array = [G.deck, G.out]
 	for p in G.players:
-		pools.append(p.hand)
+		if p != ME:      # never out of the human's hand: a card staged there must stay there
+			pools.append(p.hand)
 	for arr in pools:
 		for i in range(arr.size()):
 			if arr[i].key == key:
@@ -4414,6 +4419,8 @@ func _portraitshots() -> void:
 	await _stage("4", ["uranium", "uranium", "warhead", "short", "long"], false)
 	await get_tree().create_timer(0.3).timeout
 	await _shot(d + "/p1-quiet.png")
+	print("MUSIC: playing=%s muted=%s" % [str(not music.is_empty() and music[0].playing), str(muted)])
+	assert(muted or music.is_empty() or music[0].playing, "the music plays on the phone layout")
 	# 1b: the exchange window after a test in it - the caption says a pass hands you your turn; tapping
 	# Stand down must do just that
 	G.turn = 3
