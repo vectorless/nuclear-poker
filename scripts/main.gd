@@ -95,7 +95,9 @@ var touch_ms := 0
 var touch_seq := 0                # bumps on every touch change, cancelling a pending long-press
 var zoom_frame := -1              # the frame a touch enlarged a card (Godot sends the emulated click first)
 var touch_scroll: Control = null  # a self-scrolling text box the finger is dragging
-var turn_overlay: Control = null  # "turn your device sideways" on a portrait screen
+var portrait := false             # an upright screen: the phone layout (scripts/portrait.gd) instead of the table
+var portrait_ui = null            # the PortraitUI, once an upright screen has asked for it
+const PORTRAIT := preload("res://scripts/portrait.gd")
 var debug_panel: Control = null      # F9: what the AI players know and think
 var music: Array = []             # one player per tension level, all running in sync
 var music_level := -1
@@ -149,12 +151,20 @@ class HandCard extends Control:
 	var tw: Tween
 	var dragging := false
 	static var touch := false      # set by the game while the player is using a touch screen
+	static var custom_preview := false      # the phone layout brings its own picture for the drag
+	static var lift := 1.35        # how a card grows when lifted, and how far it rises
+	static var lift_y := -14.0
 	static var hov_cid := -1       # the card that was lifted when the hand was last rebuilt, and when
 	static var hov_ms := 0
 	var press_ms := 0
 	func _get_drag_data(at: Vector2) -> Variant:
 		if not can_drag:
 			return null
+		if custom_preview and preview.is_valid():
+			set_drag_preview(preview.call())
+			dragging = true
+			modulate.a = 0.0
+			return {"cid": cid}
 		# the card itself leaves the hand and travels with the pointer, held where it was grabbed
 		var holder := Control.new()
 		var t := TextureRect.new()
@@ -193,13 +203,13 @@ class HandCard extends Control:
 		if on and cid == hov_cid and Time.get_ticks_msec() - hov_ms < 400:
 			# the same card under a still mouse after a rebuild: lift it at once, no second pop
 			face.pivot_offset = Vector2(size.x / 2.0, size.y)
-			face.position.y = -14.0
-			face.scale = Vector2.ONE * 1.35
+			face.position.y = lift_y
+			face.scale = Vector2.ONE * lift
 			return
 		face.pivot_offset = Vector2(size.x / 2.0, size.y)      # grow up and out from the bottom edge
 		tw = create_tween().set_parallel(true)
-		tw.tween_property(face, "position:y", -14.0 if on else 0.0, 0.12)
-		tw.tween_property(face, "scale", Vector2.ONE * (1.35 if on else 1.0), 0.12).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(face, "position:y", lift_y if on else 0.0, 0.12)
+		tw.tween_property(face, "scale", Vector2.ONE * (lift if on else 1.0), 0.12).set_trans(Tween.TRANS_SINE)
 	func _gui_input(e: InputEvent) -> void:
 		if not (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT):
 			return
@@ -664,40 +674,47 @@ func _hint_at(pos: Vector2) -> String:
 				best = c.tooltip_text      # later in the tree draws on top
 	return best
 
-## Phones held upright: the table needs a landscape screen, so ask for the device to be turned.
+## An upright screen - a phone held in portrait - gets the phone layout (scripts/portrait.gd) at a
+## logical width of 390, so the design's measurements hold; a landscape screen keeps the table as it
+## is. The window's physical size decides, so changing the layout never re-triggers itself.
+var orienting := false      # changing the content scale resizes the viewport: not a new orientation
 func _check_orientation(sz := Vector2.ZERO) -> void:
-	if sz == Vector2.ZERO:
-		sz = get_viewport_rect().size
-	var upright := sz.y > sz.x * 1.1 and (touch or DisplayServer.is_touchscreen_available() or sz != get_viewport_rect().size)
-	if upright and turn_overlay == null:
-		turn_overlay = ColorRect.new()
-		(turn_overlay as ColorRect).color = Color(0.07, 0.07, 0.05, 0.97)
-		turn_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		turn_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-		var cc := CenterContainer.new()
-		cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		turn_overlay.add_child(cc)
-		var vb := VBoxContainer.new()
-		vb.alignment = BoxContainer.ALIGNMENT_CENTER
-		vb.add_theme_constant_override("separation", 24)
-		cc.add_child(vb)
-		var tr := Trefoil.new()
-		tr.custom_minimum_size = Vector2(160, 160)
-		tr.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		vb.add_child(tr)
-		var l := _lbl("TURN YOUR DEVICE SIDEWAYS", 64, C_INK, HEAD)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		vb.add_child(l)
-		var l2 := _lbl("The table needs a landscape screen.", 40, C_MUT, MONO)
-		l2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		vb.add_child(l2)
-		var ly := CanvasLayer.new()
-		ly.layer = 50
-		ly.add_child(turn_overlay)
-		add_child(ly)
-	elif not upright and turn_overlay != null:
-		turn_overlay.get_parent().queue_free()
-		turn_overlay = null
+	if DisplayServer.get_name() == "headless" or orienting:
+		return
+	var ws := sz if sz != Vector2.ZERO else Vector2(DisplayServer.window_get_size())
+	var upright := ws.y > ws.x * 1.1
+	if upright == portrait:
+		return
+	portrait = upright
+	orienting = true
+	get_window().content_scale_size = Vector2i(390, 844) if portrait else Vector2i(1280, 720)
+	_apply_mode()
+	orienting = false
+
+func _apply_mode() -> void:
+	HandCard.custom_preview = portrait
+	HandCard.lift = 1.15 if portrait else 1.35
+	HandCard.lift_y = -8.0 if portrait else -14.0
+	_close_modal(true)
+	_close_popup()
+	if portrait:
+		if portrait_ui == null:
+			portrait_ui = PORTRAIT.new()
+			portrait_ui.M = self
+			add_child(portrait_ui)
+			move_child(portrait_ui, overlay.get_index())
+		menu_root.visible = false
+		game_root.visible = false
+		portrait_ui.visible = true
+		portrait_ui.render()
+	else:
+		if portrait_ui != null:
+			portrait_ui.close_all()
+			portrait_ui.visible = false
+		menu_root.visible = G == null
+		game_root.visible = G != null
+		if G != null:
+			_render()
 
 # ====================================================================== style helpers
 func _sb(bg: Color, border := Color(0, 0, 0, 0), bw := 0, radius := 10, pad := 0) -> StyleBoxFlat:
@@ -1002,6 +1019,8 @@ func _ready() -> void:
 		_supershots.call_deferred()
 	elif "--dragtest" in OS.get_cmdline_user_args():
 		_dragtest.call_deferred()
+	elif "--portraitshots" in OS.get_cmdline_user_args():
+		_portraitshots.call_deferred()
 
 func _load_cfg() -> void:
 	var cf := ConfigFile.new()
@@ -1513,7 +1532,9 @@ func _start_game() -> void:
 	_close_popup()
 	G.event.connect(_on_event)
 	menu_root.visible = false
-	game_root.visible = true
+	game_root.visible = not portrait
+	if portrait_ui != null:
+		portrait_ui.close_all()
 	_ambience(true)
 	G.log_msg("Game on - Classic rules, %d players. %s goes first." % [G.players.size(), G.cur().name], "sys")
 	_pump()
@@ -1641,12 +1662,22 @@ func _on_resize() -> void:
 	_refresh_fs_buttons()
 	if G != null and game_root.visible:
 		_render()
+	elif portrait and portrait_ui != null:
+		portrait_ui.render()
 
 # ====================================================================== render
 func _render() -> void:
 	if G == null:
 		return
 	_zoom_hide()
+	if portrait:
+		_render_side()      # keeps the landscape paper in step, for when the screen turns
+		if portrait_ui != null:
+			portrait_ui.render()
+		_music_update()
+		if debug_panel != null:
+			_build_debug()
+		return
 	_render_board()      # first: it resets the button registry
 	_render_top()
 	_render_side()
@@ -2522,7 +2553,11 @@ func _to_menu() -> void:
 	_close_popup()
 	G = null
 	game_root.visible = false
-	menu_root.visible = true
+	menu_root.visible = not portrait
+	if portrait_ui != null:
+		portrait_ui.close_all()
+		if portrait:
+			portrait_ui.render()
 
 # ---- drag and drop
 func _can_offer() -> bool:
@@ -2645,9 +2680,23 @@ func _open_modal(title: String, red := false, sticky := false, pause := false) -
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	modal.add_child(cc)
 	var pn := PanelContainer.new()
-	pn.add_theme_stylebox_override("panel", _sb(C_PANEL, C_LINE, 1, 14, 20))
-	pn.custom_minimum_size.x = clampf(vp.x - 40.0, 300.0, 760.0)
-	cc.add_child(pn)
+	if portrait:
+		var sw := minf(vp.x, 480.0)
+		var ss := _sb(C_PANEL, C_LINE, 0, 16, 16)
+		ss.border_width_top = 1
+		ss.corner_radius_bottom_left = 0
+		ss.corner_radius_bottom_right = 0
+		ss.content_margin_bottom = 40
+		pn.add_theme_stylebox_override("panel", ss)
+		pn.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+		pn.offset_left = (vp.x - sw) / 2.0
+		pn.offset_right = -(vp.x - sw) / 2.0
+		pn.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		modal.add_child(pn)
+	else:
+		pn.add_theme_stylebox_override("panel", _sb(C_PANEL, C_LINE, 1, 14, 20))
+		pn.custom_minimum_size.x = clampf(vp.x - 40.0, 300.0, 760.0)
+		cc.add_child(pn)
 	modal_scroll = ScrollContainer.new()
 	modal_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	pn.add_child(modal_scroll)
@@ -2656,7 +2705,7 @@ func _open_modal(title: String, red := false, sticky := false, pause := false) -
 	modal_vbox.add_theme_constant_override("separation", 10)
 	modal_scroll.add_child(modal_vbox)
 	var hd := HBoxContainer.new()
-	var tl := _lbl(title.to_upper(), 28, C_RED if red else C_INK, HEAD)
+	var tl := _lbl(title.to_upper(), 22 if portrait else 28, C_RED if red else C_INK, HEAD)
 	tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hd.add_child(tl)
@@ -2733,6 +2782,9 @@ func _attack_modal() -> void:
 
 ## You are being threatened: give up every Capability card, or refuse.
 func _threat_modal() -> void:
+	if portrait:
+		portrait_ui.threat_sheet()
+		return
 	var pr := G.prompt
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
@@ -2834,6 +2886,9 @@ func _force_trade_modal(tid: int) -> void:
 
 ## You are threatened with a forced trade: choose the card you give back - or refuse.
 func _demand_modal() -> void:
+	if portrait:
+		portrait_ui.demand_sheet()
+		return
 	var pr := G.prompt
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
@@ -2888,6 +2943,9 @@ func _disarm_modal() -> void:
 
 ## An AI power proposes a stand-down and the others agree: the last word is yours.
 func _ceasefire_modal() -> void:
+	if portrait:
+		portrait_ui.ceasefire_sheet()
+		return
 	var pr := G.prompt
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
@@ -2917,6 +2975,9 @@ func _ceasefire_modal() -> void:
 	modal_btns.append({"kind": "cease_no", "button": n})
 
 func _counter_modal() -> void:
+	if portrait:
+		portrait_ui.counter_sheet()
+		return
 	var pr := G.prompt
 	if pr.is_empty() or not pr.player.human or modal != null:
 		return
@@ -3000,6 +3061,9 @@ func _finish() -> void:
 		_end_modal()
 
 func _end_modal() -> void:
+	if portrait:
+		portrait_ui.end_page()
+		return
 	var r := G.result
 	if r.kind == "mad":
 		_mad_modal()
@@ -3261,8 +3325,10 @@ func _fx(text: String, kind: String) -> void:
 	var cc := CenterContainer.new()
 	cc.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var l := _lbl(text.to_upper(), 72, col, HEAD)
+	var l := _lbl(text.to_upper(), 40 if portrait else 72, col, HEAD, portrait)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if portrait:      # a narrow screen: the headline wraps instead of running off the sides
+		l.custom_minimum_size.x = get_viewport_rect().size.x - 32.0
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.modulate.a = 0.0
 	cc.add_child(l)
@@ -3279,12 +3345,13 @@ func _fx(text: String, kind: String) -> void:
 	tw.chain().tween_callback(root.queue_free)
 
 func _shake() -> void:
-	if game_root == null or not game_root.visible:
+	var tgt: Control = portrait_ui if portrait else game_root
+	if tgt == null or not tgt.visible:
 		return
 	var tw := create_tween()
 	for i in range(6):
-		tw.tween_property(game_root, "position:x", (8.0 if i % 2 == 0 else -8.0) * (1.0 - i / 6.0), 0.05)
-	tw.tween_property(game_root, "position:x", 0.0, 0.05)
+		tw.tween_property(tgt, "position:x", (8.0 if i % 2 == 0 else -8.0) * (1.0 - i / 6.0), 0.05)
+	tw.tween_property(tgt, "position:x", 0.0, 0.05)
 
 func _toast(msg: String) -> void:
 	var pc := PanelContainer.new()
@@ -3629,7 +3696,7 @@ func _autotest() -> void:
 
 # ====================================================================== staged screenshots (--shots)
 func _stage_take(key: String):
-	var pools: Array = [G.deck]
+	var pools: Array = [G.deck, G.out]
 	for p in G.players:
 		pools.append(p.hand)
 	for arr in pools:
@@ -3957,10 +4024,10 @@ func _touchtest() -> void:
 	# upright phone: ask for landscape
 	_check_orientation(Vector2(720, 1500))
 	await get_tree().process_frame
-	fails += say.call(turn_overlay != null, "portrait screen asks to turn the device")
+	fails += say.call(portrait and portrait_ui != null and portrait_ui.visible, "an upright screen switches to the phone layout")
 	await _shot("/tmp/gshots2/touch-portrait.png")
 	_check_orientation(Vector2(1280, 720))
-	fails += say.call(turn_overlay == null, "landscape again removes it")
+	fails += say.call(not portrait and not portrait_ui.visible, "landscape again restores the table")
 	print("TOUCHTEST DONE fails=", fails)
 	get_tree().quit(fails)
 
@@ -4288,3 +4355,129 @@ func _shots() -> void:
 	await _shot(d + "/10-ai-move.png")
 	print("SHOTS DONE")
 	get_tree().quit(0)
+
+## The phone layout, screen by screen (/tmp/gshots2/p-*.png): the menu, a quiet turn, a card
+## lifted, a weapon lifted, the strike sheet, an offer received, a player's sheet, five players,
+## the paper, a card zoom, the end.
+func _portraitshots() -> void:
+	DisplayServer.window_set_size(Vector2i(390, 844))
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check_orientation()
+	var d := "/tmp/gshots2"
+	DirAccess.make_dir_recursive_absolute(d)
+	await get_tree().create_timer(0.4).timeout
+	await _shot(d + "/p0-menu.png")
+	var hand_card := func(key: String) -> Control:
+		for n in portrait_ui.hand_view.get_children():
+			for c in ME.hand:
+				if c.id == n.cid and c.key == key:
+					return n
+		return null
+	var seat_of := func(i: int) -> Control: return portrait_ui.seats[i]
+	# 1: your turn, quiet
+	await _stage("4", ["uranium", "uranium", "warhead", "short", "long"], false)
+	await get_tree().create_timer(0.3).timeout
+	await _shot(d + "/p1-quiet.png")
+	# 2: a card lifted over the table: every power glows, the rest dims
+	var u: Control = hand_card.call("uranium")
+	var from: Vector2 = u.get_global_rect().get_center() + Vector2(-30, 0)
+	var to: Vector2 = seat_of.call(2).get_global_rect().get_center() + Vector2(0, 100)
+	_mouse(from, false, false, true)
+	await get_tree().process_frame
+	_mouse(from, true, true)
+	await get_tree().process_frame
+	for i in range(1, 11):
+		_mouse(from.lerp(to, i / 10.0), false, false, true, true)
+		await get_tree().process_frame
+	await get_tree().create_timer(0.2).timeout
+	await _shot(d + "/p2-lifted.png")
+	_mouse(from, false, true)      # put it back
+	await get_tree().create_timer(0.3).timeout
+	# 3 and 4: tested, a weapon lifted - only the powers it reaches glow; dropped, the strike sheet
+	await _stage("4", ["uranium", "refinement", "warhead", "testing", "short", "long", "counter"], true)
+	await get_tree().create_timer(0.3).timeout
+	var s: Control = hand_card.call("short")
+	from = s.get_global_rect().get_center() + Vector2(-30, 0)
+	to = seat_of.call(1).get_global_rect().get_center()
+	_mouse(from, false, false, true)
+	await get_tree().process_frame
+	_mouse(from, true, true)
+	await get_tree().process_frame
+	for i in range(1, 11):
+		_mouse(from.lerp(to, i / 10.0), false, false, true, true)
+		await get_tree().process_frame
+	await get_tree().create_timer(0.2).timeout
+	await _shot(d + "/p3-armed.png")
+	_mouse(to, false, true)
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/p4-strike-sheet.png")
+	portrait_ui.close_sheet()
+	await get_tree().create_timer(0.3).timeout
+	# 5: an offer received
+	await _stage("4", ["uranium", "uranium", "warhead", "short", "long"], false)
+	G.turn = 1
+	var ok: NPGame.Player = G.players[1]
+	var off = ok.hand[0]
+	G.trade_offer(ok, off.id, 0)
+	_render()
+	await get_tree().create_timer(0.4).timeout
+	await _shot(d + "/p5-offer.png")
+	# 5b: a card dropped on the offer answers it
+	var ans: Control = hand_card.call("warhead")
+	var trade_area: Control = null
+	for t in portrait_ui.targets:
+		if t.node != null and t.node.get_parent() != null and not portrait_ui.seats.values().has(t.node) and t.accept.call({"cid": ans.cid}):
+			trade_area = t.node
+	assert(trade_area != null, "the offer is a drop target")
+	from = ans.get_global_rect().get_center() + Vector2(-30, 0)
+	to = trade_area.get_global_rect().get_center()
+	_mouse(from, false, false, true)
+	await get_tree().process_frame
+	_mouse(from, true, true)
+	await get_tree().process_frame
+	for i in range(1, 11):
+		_mouse(from.lerp(to, i / 10.0), false, false, true, true)
+		await get_tree().process_frame
+	_mouse(to, false, true)
+	for i in range(3):
+		await get_tree().process_frame
+	pump_token += 1      # the answer hands play back to the table; hold it there for the shot
+	print("ANSWER DROP: prompt empty=%s" % str(G.prompt.is_empty()))
+	assert(G.prompt.is_empty(), "dropping a card on the offer answers the trade")
+	await _shot(d + "/p5b-answered.png")
+	# 6: a player's sheet
+	portrait_ui.player_sheet(G.players[1])
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/p6-player-sheet.png")
+	portrait_ui.close_sheet()
+	# 7: five players, one eliminated, a strike in the paper
+	await _stage("5", ["uranium", "refinement", "warhead", "short", "long", "counter"], false)
+	G.kill([G.players[3]], {3: G.players[1]})
+	G.log_msg("%s strikes %s. %s is eliminated." % [G.players[1].name, G.players[3].name, G.players[3].name], "death")
+	_render()
+	await get_tree().create_timer(0.4).timeout
+	await _shot(d + "/p7-five.png")
+	# 8: the paper unfolded
+	portrait_ui.paper_sheet()
+	await get_tree().create_timer(0.6).timeout
+	await _shot(d + "/p8-paper.png")
+	portrait_ui.close_sheet()
+	# 9: a card zoom
+	portrait_ui.zoom_sheet(ME.hand[ME.hand.size() - 1], "hand")
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/p9-zoom.png")
+	portrait_ui.close_sheet()
+	# 10: the menu sheet
+	portrait_ui.menu_sheet()
+	await get_tree().create_timer(0.5).timeout
+	await _shot(d + "/p10-menu-sheet.png")
+	portrait_ui.close_sheet()
+	# 11: the end
+	G.over = true
+	G.result = {"kind": "mad", "survivors": [0, 1, 2, 4]}
+	portrait_ui.end_page()
+	await get_tree().create_timer(0.6).timeout
+	await _shot(d + "/p11-end.png")
+	print("PORTRAIT SHOTS DONE")
+	get_tree().quit()

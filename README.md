@@ -19,6 +19,11 @@ AI powers. Unofficial adaptation. All art, portraits, photographs and audio are 
 - In the browser: https://vectorless.github.io/nuclear-poker/
 - On itch.io: https://vectorless.itch.io/nuclear-poker
 
+On a phone held upright the game switches to a portrait layout (`scripts/portrait.gd`): the other
+powers in a row, the draw pile and the folded paper, your hand along the bottom. Drag a card where it
+goes - onto a power to trade or strike, onto your table to test, onto an offer to answer - and tap
+anything to see more. Turn the phone sideways and the full table comes back.
+
 ## Run
 Open the folder in Godot 4.6+ and press Play (main scene: `scripts/main.tscn`).
 
@@ -33,7 +38,9 @@ the trust between the powers at the start of each turn, the public log, and a `~
 the numbers it weighed.
 
 Tests (`godot --headless --path . -s tests/<name>.gd`): `rules_test`, `trade_test`, `persona_test`, `human_sim`, and
-`sim` (600 AI-vs-AI games, also run by CI).
+`sim` (600 AI-vs-AI games, also run by CI). UI runs (`godot --path . -- --<mode>`): `autotest`, `dragtest`,
+`touchtest`, and the screenshot modes `shots`, `madshots`, `personashots`, `supershots`, `portraitshots`
+(the phone layout, screen by screen), all written to `/tmp/gshots2`.
 
 ## Licensing
 - **Code** (scripts, scenes, tests, tools): [MIT](LICENSE).
