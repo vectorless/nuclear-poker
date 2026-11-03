@@ -1495,13 +1495,6 @@ func player_sheet(p: NPGame.Player) -> void:
 		lc.add_theme_constant_override("margin_top", 10)
 		lc.add_child(lines)
 		body.add_child(lc)
-	if p.alive and _strike_ok("super", p):
-		var bb := _sheet_buttons(body)
-		var sb := _pbtn("Superpower strike", "danger")
-		sb.pressed.connect(func():
-			close_sheet()
-			M._declare({"kind": "attack", "type": "super", "target": p.id}))
-		bb.add_child(sb)
 
 func _mark_line(c: Color, text: String) -> Control:
 	var hb := _hbox(10)
